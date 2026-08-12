@@ -82,7 +82,7 @@ flowchart LR
 ### Discord Developer Portal setup
 
 1. Create application → Bot → copy token → `DISCORD_BOT_TOKEN`.
-2. Privileged Gateway Intents: enable **Message Content Intent** (and Server Members if you rely on role caches in large guilds; Phase 1 uses roles on the member object from the gateway).
+2. Privileged Gateway Intents: enable **Message Content Intent**. Phase 1 reads roles from `message.member` on guild messages.
 3. OAuth2 URL Generator: scopes `bot`; permissions: View Channels, Send Messages, Read Message History, Add Reactions (optional).
 4. Invite to a **private** test server first. Do not make the bot public until access control is verified.
 5. Never commit tokens; use `.env` locally / secrets in CI-deploy.

@@ -32,8 +32,7 @@ flowchart LR
 
 1. [Discord Developer Portal](https://discord.com/developers/applications) → New Application → **Bot**.
 2. Copy the bot token → `DISCORD_BOT_TOKEN` (never commit it).
-3. Under **Privileged Gateway Intents**, enable **Message Content Intent**.  
-   (Server Members Intent is also requested by this client for role checks on large guilds.)
+3. Under **Privileged Gateway Intents**, enable **Message Content Intent**.
 4. OAuth2 → URL Generator → scopes: `bot`.  
    Permissions: View Channels, Send Messages, Read Message History.
 5. Invite the bot to a **private** test server first. Keep the bot **private** until allowlists are verified.
