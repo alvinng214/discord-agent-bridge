@@ -148,8 +148,10 @@ Point `SYSTEM_PROMPT_FILE` at an example, or replace with your Grok Bot’s own 
 
 ## Phase 2 notes
 
-- Implement `GrokBotBackend` when Grok Bot exposes a documented Discord/Channels-style inbound API; keep `AgentBackend` as the seam.
-- Possible: persistent memory (SQLite/Redis), richer tool registry, slash commands as *supplement* to gateway, observability (structured logs / metrics).
+See [PHASE2-GROK-BOT-BACKEND.md](./PHASE2-GROK-BOT-BACKEND.md) for the 2026-08-12 spike: no Discord Channels / inbound API yet; proposed contract + cutover checklist; stay on OpenAI-compatible until product catches up.
+
+- Implement `GrokBotBackend` only against a **documented** Discord/Channels-style inbound API; keep `AgentBackend` as the seam.
+- Possible later: persistent memory (SQLite/Redis), richer tool registry, slash commands as *supplement* to gateway, observability (structured logs / metrics).
 
 ## Implementation order
 
