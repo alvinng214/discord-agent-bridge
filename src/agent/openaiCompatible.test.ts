@@ -48,6 +48,65 @@ describe("OpenAICompatibleBackend", () => {
     expect(res.text).toBe("Hello adventurer.");
     expect(calls).toHaveLength(1);
   });
+
+  it("forces a final reply after max tool rounds", async () => {
+    let calls = 0;
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      calls += 1;
+      const body = JSON.parse(String(init?.body)) as { tools?: unknown[] };
+      if (calls <= 3) {
+        expect(body.tools).toBeDefined();
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  role: "assistant",
+                  content: "",
+                  tool_calls: [
+                    {
+                      id: `call_${calls}`,
+                      type: "function",
+                      function: { name: "web_search", arguments: "{\"query\":\"7dtd water\"}" },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      expect(body.tools).toBeUndefined();
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { role: "assistant", content: "Collect murky water then boil it." } }],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    };
+
+    const backend = new OpenAICompatibleBackend({
+      apiBaseUrl: "https://api.example.com/v1",
+      apiKey: "k",
+      model: "m",
+      systemPrompt: "sys",
+      temperature: 0.2,
+      maxTokens: 64,
+      memoryMaxMessages: 10,
+      braveApiKey: "brave",
+      fetchImpl,
+      maxToolRounds: 3,
+    });
+
+    const res = await backend.generate({
+      conversationKey: "chan",
+      authorDisplayName: "Nate",
+      content: "how do I get water?",
+    });
+    expect(res.text).toBe("Collect murky water then boil it.");
+    expect(calls).toBe(4);
+  });
 });
 
 describe("web search tools", () => {

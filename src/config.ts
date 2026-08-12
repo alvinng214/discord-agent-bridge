@@ -75,11 +75,21 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const agentBackend = agentBackendRaw as AgentBackendKind;
 
   const systemPromptFile = env.SYSTEM_PROMPT_FILE?.trim() || "SOUL.md";
-  const systemPrompt = loadSystemPrompt(systemPromptFile);
+  let systemPrompt = loadSystemPrompt(systemPromptFile);
 
   const apiBaseUrl = env.API_BASE_URL?.trim() || null;
   const apiKey = env.API_KEY?.trim() || null;
   const model = env.MODEL?.trim() || null;
+
+  // Keep identity truthful: many models default to "I'm ChatGPT" when asked.
+  if (model) {
+    systemPrompt = `${systemPrompt}
+
+## Runtime identity
+- You are served through an OpenAI-compatible API as model \`${model}\`.
+- When asked which model/product you are, answer with that model id (e.g. Grok via OpenRouter if the id is under \`x-ai/\`).
+- Do not claim to be ChatGPT, OpenAI, Claude, or any other vendor unless the model id actually is that product.`;
+  }
 
   if (agentBackend === "openai") {
     if (!apiBaseUrl) throw new Error("API_BASE_URL is required when AGENT_BACKEND=openai");

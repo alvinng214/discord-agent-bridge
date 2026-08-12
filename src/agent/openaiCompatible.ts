@@ -107,7 +107,18 @@ export class OpenAICompatibleBackend implements AgentBackend {
       return { text };
     }
 
-    throw new Error("Exceeded max tool rounds without a final assistant reply");
+    // Model kept requesting tools — force one final completion with tools disabled.
+    const finalData = await this.chatCompletions(messages, undefined);
+    const finalMessage = finalData.choices?.[0]?.message;
+    if (!finalMessage) {
+      throw new Error("OpenAI-compatible API returned no choices on final round");
+    }
+    const finalText = (finalMessage.content ?? "").trim();
+    if (!finalText) {
+      throw new Error("Exceeded max tool rounds without a final assistant reply");
+    }
+    this.memory.append(request.conversationKey, { role: "assistant", content: finalText });
+    return { text: finalText };
   }
 
   private async chatCompletions(

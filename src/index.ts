@@ -25,6 +25,12 @@ function createBackend(config: ReturnType<typeof loadConfig>): AgentBackend {
 
 async function main(): Promise<void> {
   const config = loadConfig();
+  console.log(
+    `[bridge] backend=${config.agentBackend}` +
+      (config.model ? ` model=${config.model}` : "") +
+      (config.apiBaseUrl ? ` base=${config.apiBaseUrl}` : "") +
+      ` soul=${config.systemPromptFile}`,
+  );
   const backend = createBackend(config);
   await startBot(config, backend);
 }

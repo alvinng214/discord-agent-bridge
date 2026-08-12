@@ -37,7 +37,9 @@ describe("loadConfig", () => {
     expect(cfg.freeResponseChannels).toEqual(["c1", "c2"]);
     expect(cfg.requireMention).toBe(true);
     expect(cfg.allowAllUsers).toBe(false);
-    expect(cfg.systemPrompt).toBe("You are a test soul.");
+    expect(cfg.systemPrompt).toContain("You are a test soul.");
+    expect(cfg.systemPrompt).toContain("Runtime identity");
+    expect(cfg.systemPrompt).toMatch(/model `m`/);
     expect(cfg.temperature).toBe(0.7);
     expect(cfg.maxTokens).toBe(1024);
   });
