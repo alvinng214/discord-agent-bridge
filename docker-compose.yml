@@ -1,0 +1,9 @@
+services:
+  bridge:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      # Optional: override the default soul without rebuilding
+      - ./SOUL.md:/app/SOUL.md:ro
