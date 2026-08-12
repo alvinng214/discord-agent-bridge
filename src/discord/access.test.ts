@@ -132,4 +132,18 @@ describe("evaluateAccess", () => {
     expect(d.allowed).toBe(false);
     if (!d.allowed) expect(d.reason).toBe("no_user_allowlist_for_dm");
   });
+
+  it("allows threads under a free-response parent without mention", () => {
+    expect(
+      evaluateAccess(
+        guildInput({
+          channelId: "thread-1",
+          parentChannelId: "free",
+          botMentioned: false,
+        }),
+        baseConfig,
+      ),
+    ).toEqual({ allowed: true });
+  });
+
 });

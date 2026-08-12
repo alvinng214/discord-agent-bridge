@@ -5,9 +5,11 @@ export interface AgentRequest {
   authorDisplayName: string;
   /** User message with bot mention stripped. */
   content: string;
-  /** Guild text/thread channel name when available (e.g. "7dtd"). */
+  /** Parent guild channel name when available (e.g. "7dtd"); for threads, the parent. */
   channelName?: string;
-  /** Channel topic when set. */
+  /** Thread name when the message is in a thread. */
+  threadName?: string;
+  /** Channel topic when set (parent topic for threads). */
   channelTopic?: string | null;
   /** Guild name when available. */
   guildName?: string;

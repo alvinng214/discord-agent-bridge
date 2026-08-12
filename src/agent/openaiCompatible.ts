@@ -56,6 +56,7 @@ export class OpenAICompatibleBackend implements AgentBackend {
   async generate(request: AgentRequest): Promise<AgentResponse> {
     const contextBits: string[] = [];
     if (request.channelName) contextBits.push(`#${request.channelName}`);
+    if (request.threadName) contextBits.push(`thread: ${request.threadName}`);
     if (request.channelTopic?.trim()) contextBits.push(`topic: ${request.channelTopic.trim()}`);
     if (request.guildName) contextBits.push(`server: ${request.guildName}`);
     const contextPrefix = contextBits.length > 0 ? `[${contextBits.join(" | ")}] ` : "";

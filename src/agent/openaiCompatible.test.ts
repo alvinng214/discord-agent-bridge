@@ -132,16 +132,18 @@ describe("OpenAICompatibleBackend", () => {
     });
 
     await backend.generate({
-      conversationKey: "chan",
+      conversationKey: "thread:t1",
       authorDisplayName: "Nate",
       content: "where are cooking pots?",
       channelName: "7dtd",
+      threadName: "water tips",
       channelTopic: "7 Days to Die",
       guildName: "Farmers",
     });
 
     const userMsg = calls[0]!.messages.find((m) => m.role === "user");
     expect(userMsg?.content).toContain("#7dtd");
+    expect(userMsg?.content).toContain("thread: water tips");
     expect(userMsg?.content).toContain("topic: 7 Days to Die");
     expect(userMsg?.content).toContain("where are cooking pots?");
   });

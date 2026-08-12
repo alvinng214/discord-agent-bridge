@@ -1,5 +1,6 @@
 import {
   Client,
+  Events,
   GatewayIntentBits,
   Partials,
   ChannelType,
@@ -35,24 +36,47 @@ function stripBotMention(content: string, botId: string): string {
     .trim();
 }
 
-function conversationKey(message: Message): string {
-  return message.channelId;
+/** Memory key: threads use their own id so history does not bleed into the parent. */
+export function conversationKey(message: Message): string {
+  const channel = message.channel;
+  if ("isThread" in channel && typeof channel.isThread === "function" && channel.isThread()) {
+    return `thread:${message.channelId}`;
+  }
+  return `channel:${message.channelId}`;
 }
 
 
-function channelContext(message: Message): {
+export function channelContext(message: Message): {
   channelName?: string;
+  threadName?: string;
   channelTopic?: string | null;
   guildName?: string;
+  parentChannelId?: string | null;
 } {
-  const guildName = message.guild?.name;
+  const guildName = message.guild?.name ?? undefined;
   const channel = message.channel;
+
+  if ("isThread" in channel && typeof channel.isThread === "function" && channel.isThread()) {
+    const parent = channel.parent;
+    const parentName =
+      parent && "name" in parent && typeof parent.name === "string" ? parent.name : undefined;
+    const topic =
+      parent && "topic" in parent && typeof parent.topic === "string" ? parent.topic : null;
+    return {
+      channelName: parentName ?? ("name" in channel ? channel.name : undefined),
+      threadName: "name" in channel ? channel.name : undefined,
+      channelTopic: topic,
+      guildName,
+      parentChannelId: channel.parentId ?? null,
+    };
+  }
+
   if ("name" in channel && typeof channel.name === "string") {
     const topic =
       "topic" in channel && typeof channel.topic === "string" ? channel.topic : null;
     return { channelName: channel.name, channelTopic: topic, guildName };
   }
-  return { guildName: guildName ?? undefined };
+  return { guildName };
 }
 
 
@@ -88,11 +112,14 @@ async function handleMessage(
   const botMentioned = message.mentions.users.has(client.user.id);
   const authorRoleIds = message.member?.roles.cache.map((r) => r.id) ?? [];
 
+  const ctx = channelContext(message);
+
   const access = evaluateAccess(
     {
       authorId: message.author.id,
       authorRoleIds,
       channelId: message.channelId,
+      parentChannelId: ctx.parentChannelId,
       guildId: message.guildId,
       isDm,
       botMentioned,
@@ -138,7 +165,10 @@ async function handleMessage(
         conversationKey: conversationKey(message),
         authorDisplayName: message.member?.displayName ?? message.author.username,
         content,
-        ...channelContext(message),
+        channelName: ctx.channelName,
+        threadName: ctx.threadName,
+        channelTopic: ctx.channelTopic,
+        guildName: ctx.guildName,
       }),
     );
     await sendSplitReply(message, result.text);
@@ -156,7 +186,7 @@ export async function startBot(config: Config, backend: AgentBackend): Promise<C
   const client = createDiscordClient(config);
   attachMessageHandler(client, config, backend);
 
-  client.once("ready", () => {
+  client.once(Events.ClientReady, () => {
     console.log(`[bridge] logged in as ${client.user?.tag} (backend=${backend.name})`);
     if (config.homeChannel) {
       console.log(`[bridge] home channel configured: ${config.homeChannel}`);

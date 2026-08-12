@@ -2,6 +2,8 @@ export interface AccessInput {
   authorId: string;
   authorRoleIds: string[];
   channelId: string;
+  /** Parent channel id when message is in a thread. */
+  parentChannelId?: string | null;
   guildId: string | null;
   isDm: boolean;
   botMentioned: boolean;
@@ -77,7 +79,10 @@ export function evaluateAccess(input: AccessInput, config: AccessConfig): Access
   }
 
   if (!input.isDm) {
-    const freeChannel = config.freeResponseChannels.includes(input.channelId);
+    const freeChannel =
+      config.freeResponseChannels.includes(input.channelId) ||
+      (!!input.parentChannelId &&
+        config.freeResponseChannels.includes(input.parentChannelId));
     const mentionRequired = config.requireMention && !freeChannel;
     if (mentionRequired && !input.botMentioned) {
       return { allowed: false, reason: "mention_required" };
