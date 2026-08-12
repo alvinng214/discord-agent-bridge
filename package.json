@@ -1,7 +1,7 @@
 {
   "name": "discord-agent-bridge",
   "version": "0.1.0",
-  "description": "Open-source Discord ↔ AI agent bridge (gateway bot + pluggable backends)",
+  "description": "Open-source Discord ↔ Grok Bot connector (gateway bridge + pluggable AgentBackend)",
   "type": "module",
   "engines": {
     "node": ">=20"

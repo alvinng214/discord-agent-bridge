@@ -2,20 +2,28 @@
 
 ## Goal
 
-Open-source Discord ↔ AI agent bridge to replace Hermes for a gaming-helper Discord bot.
+**Connect any Grok Bot to Discord** for personal or small-team use — a community Discord ↔ Grok Bot connector for people who work in Discord instead of Slack/Teams.
+
+Use-case specificity (persona, tools, routines) belongs in the **Grok Bot**, not in this bridge. A gaming helper, team assistant, or personal agent are all valid; this repo stays use-case agnostic.
 
 **Flow:** Discord message → bridge (auth + routing) → pluggable `AgentBackend` → reply in Discord.
 
-## Phase 1 scope (this repo scaffold)
+## North Star
 
-Always-on Node.js gateway bot (not Azure Functions / slash-commands-only). Pluggable backends; production path is OpenAI-compatible HTTP APIs (xAI / OpenAI / OpenRouter). Grok Bot Channels API is an extension stub only.
+Ship a real `GrokBotBackend` once Grok Bot exposes a Discord/Channels-style inbound API. This repo is the community connector for that path.
+
+**Phase 1** keeps `OpenAICompatibleBackend` as the runnable stand-in (xAI / OpenAI / OpenRouter chat completions) so individuals and teams can use Discord today. `GrokBotBackend` is an explicit stub until the API exists — we do not invent it.
+
+## Phase 1 scope
+
+Always-on Node.js gateway bot (not Azure Functions / slash-commands-only). Pluggable backends; Phase 1 production path is OpenAI-compatible HTTP. Team-friendly access control: users, roles, guilds, free-response channels, optional DMs / DM-only mode.
 
 ### Stack
 
 | Piece | Choice |
 |-------|--------|
 | Runtime | Node.js 20+, TypeScript ESM |
-| Discord | discord.js v14 gateway (`GuildMessages` + `MessageContent` intents) |
+| Discord | discord.js v14 gateway (`GuildMessages` + `MessageContent`; `DirectMessages` when DMs enabled) |
 | Tests | Vitest |
 | Build | `tsc` → `dist/` |
 | Ops | Dockerfile + docker-compose |
@@ -43,17 +51,17 @@ flowchart LR
 | Module | Responsibility |
 |--------|----------------|
 | `src/config.ts` | Parse/validate env; export typed config |
-| `src/discord/access.ts` | Role / user / mention / free-channel gates |
+| `src/discord/access.ts` | User / role / guild / DM / mention / free-channel gates |
 | `src/discord/rateLimit.ts` | Simple per-user sliding window |
 | `src/discord/reply.ts` | Typing indicator, ~1900-char split, send |
 | `src/discord/bot.ts` | Client, messageCreate handler, ignore bots/self |
 | `src/agent/backend.ts` | `AgentBackend` interface |
-| `src/agent/openaiCompatible.ts` | Chat completions + memory + optional tools |
-| `src/agent/grokBot.ts` | Stub throwing clear not-implemented error |
+| `src/agent/openaiCompatible.ts` | Phase 1 runnable: chat completions + memory + optional tools |
+| `src/agent/grokBot.ts` | Stub — awaiting Grok Bot Channels-style API |
 | `src/agent/memory.ts` | In-memory per-channel/thread history with length cap |
 | `src/agent/tools/webSearch.ts` | Brave and/or Tavily if keys present |
 | `src/index.ts` | Load config, pick backend, start bot |
-| `SOUL.md` | Default system prompt (gaming helper) |
+| `SOUL.md` | Neutral default system prompt (swap via `SYSTEM_PROMPT_FILE` / examples) |
 
 ### Env vars
 
@@ -63,10 +71,13 @@ flowchart LR
 | `DISCORD_ALLOWED_ROLES` | no | Comma-separated role IDs; empty = no role gate |
 | `DISCORD_ALLOW_ALL_USERS` | no | Default `false` |
 | `DISCORD_ALLOWED_USERS` | no | Comma-separated user IDs |
+| `DISCORD_ALLOWED_GUILDS` | no | Comma-separated guild IDs; empty = any guild |
+| `DISCORD_ALLOW_DMS` | no | Default `false`; allow DM conversations with the bot |
+| `DISCORD_DM_ONLY` | no | Default `false`; ignore all guild messages |
 | `DISCORD_FREE_RESPONSE_CHANNELS` | no | Channel IDs: reply without @mention |
-| `DISCORD_REQUIRE_MENTION` | no | Default `true` outside free-response channels |
+| `DISCORD_REQUIRE_MENTION` | no | Default `true` outside free-response channels (DMs never require mention) |
 | `DISCORD_HOME_CHANNEL` | no | Optional home channel ID (logged / future routing) |
-| `AGENT_BACKEND` | no | `openai` (default) \| `grok-bot` |
+| `AGENT_BACKEND` | no | `openai` (default, Phase 1) \| `grok-bot` (stub → North Star) |
 | `API_BASE_URL` | if openai | e.g. `https://api.x.ai/v1` |
 | `API_KEY` | if openai | Provider API key |
 | `MODEL` | if openai | Model id |
@@ -84,50 +95,60 @@ flowchart LR
 1. Create application → Bot → copy token → `DISCORD_BOT_TOKEN`.
 2. Privileged Gateway Intents: enable **Message Content Intent**. Phase 1 reads roles from `message.member` on guild messages.
 3. OAuth2 URL Generator: scopes `bot`; permissions: View Channels, Send Messages, Read Message History, Add Reactions (optional).
-4. Invite to a **private** test server first. Do not make the bot public until access control is verified.
+4. Invite to a **private** test server (or use DMs with `DISCORD_ALLOW_DMS=true`) first. Do not make the bot public until access control is verified.
 5. Never commit tokens; use `.env` locally / secrets in CI-deploy.
 
-### Access control (Hermes-like)
+### Access control (team-friendly)
 
-A guild message is handled only if:
+A message is handled only if:
 
 1. Author is not a bot / not self.
-2. User allowlist: if `DISCORD_ALLOW_ALL_USERS` is false, author must be in `DISCORD_ALLOWED_USERS` **or** (when roles are configured) hold at least one of `DISCORD_ALLOWED_ROLES`. If both user and role lists are empty and allow-all is false, nobody is allowed (fail closed).
-3. Mention: bot must be @mentioned unless the channel is in `DISCORD_FREE_RESPONSE_CHANNELS`, or `DISCORD_REQUIRE_MENTION=false`.
+2. **Channel kind:** if `DISCORD_DM_ONLY`, reject guild messages. If the message is a DM, require `DISCORD_ALLOW_DMS`. If guild and `DISCORD_ALLOWED_GUILDS` is non-empty, guild must be listed.
+3. **Who:** if `DISCORD_ALLOW_ALL_USERS` is false, author must be in `DISCORD_ALLOWED_USERS` **or** (guild only, when roles are configured) hold at least one of `DISCORD_ALLOWED_ROLES`. If both user and role lists are empty and allow-all is false, nobody is allowed (fail closed). DMs use the user allowlist / allow-all only (no roles).
+4. **Mention:** in guilds, bot must be @mentioned unless the channel is in `DISCORD_FREE_RESPONSE_CHANNELS`, or `DISCORD_REQUIRE_MENTION=false`. DMs never require an @mention.
 
 ### Reply UX
 
 - Start typing indicator while the backend runs.
-- Prefer short Discord-friendly answers (enforced via SOUL + max tokens).
+- Prefer short Discord-friendly answers (system prompt + max tokens).
 - Split replies at ~1900 characters on paragraph/newline boundaries when possible.
 - Per-user rate limit with a brief rejection message.
+
+### Examples (persona lives outside the bridge)
+
+| Path | Purpose |
+|------|---------|
+| `SOUL.md` | Neutral default |
+| `examples/team-assistant/SOUL.md` | Small-team Discord assistant |
+| `examples/gaming-helper/SOUL.md` | One domain example among many |
+
+Point `SYSTEM_PROMPT_FILE` at an example, or replace with your Grok Bot’s own soul/instructions.
 
 ### Test plan
 
 | Layer | Coverage |
 |-------|----------|
-| Unit | Config parsing; access control matrix; message split; rate limit; memory cap; backend stub error |
-| Manual | Invite bot → set allowlists → mention in free vs gated channels → verify OpenAI-compatible reply |
+| Unit | Config parsing; access control matrix (guild/DM/roles); message split; rate limit; memory cap; backend stub error |
+| Manual | Invite bot → set allowlists → mention in free vs gated channels / DM → verify OpenAI-compatible reply |
 | CI | `npm ci` → `npm test` → `npm run build` |
 
-### Hermes migration notes
+### Migrating from another Discord agent host
 
-- Copy allowlist role/user IDs and free-response channel IDs into the env vars above (same semantics, different names if Hermes used different keys — map carefully).
-- Port the Hermes “soul” / system prompt into `SOUL.md` (or point `SYSTEM_PROMPT_FILE` at your file). Do **not** copy proprietary Hermes source.
-- Point `API_BASE_URL` / `API_KEY` / `MODEL` at the same OpenAI-compatible provider Hermes used, or switch to xAI/OpenRouter.
-- Run the bridge as a long-lived process (Docker / systemd / PM2). This is not an Azure Functions / DiscordReminder-style pattern.
-- Cut over: disable Hermes listener → start bridge → smoke-test in home channel.
+- Map allowlists → `DISCORD_ALLOWED_USERS` / `DISCORD_ALLOWED_ROLES` / `DISCORD_ALLOWED_GUILDS` / `DISCORD_FREE_RESPONSE_CHANNELS`.
+- Point `SYSTEM_PROMPT_FILE` at your existing soul/instructions (or copy into `SOUL.md`). Do **not** copy proprietary host source into this repo.
+- Point `API_BASE_URL` / `API_KEY` / `MODEL` at an OpenAI-compatible provider until `GrokBotBackend` is available.
+- Run as a long-lived process (Docker / systemd / PM2). This is not an Azure Functions / reminder-bot pattern.
 
 ## Phase 1 non-goals
 
 - No Azure Functions hosting
-- No real Grok Bot Channels API client (stub only)
+- No real Grok Bot Channels API client (stub only — North Star for Phase 2+)
 - No multi-tenant SaaS
-- No proprietary Hermes code
+- No use-case-specific product logic in the bridge (gaming, sales, etc. belong in the agent)
 
 ## Phase 2 notes
 
-- Implement `GrokBotBackend` when the Grok Bot Channels API is available and documented; keep `AgentBackend` as the seam.
+- Implement `GrokBotBackend` when Grok Bot exposes a documented Discord/Channels-style inbound API; keep `AgentBackend` as the seam.
 - Possible: persistent memory (SQLite/Redis), richer tool registry, slash commands as *supplement* to gateway, observability (structured logs / metrics).
 
 ## Implementation order
@@ -137,5 +158,5 @@ A guild message is handled only if:
 3. Config + access + rate limit + split utilities + tests  
 4. Agent backends + memory + optional web search  
 5. Discord bot wiring + `index.ts`  
-6. SOUL.md, README, Docker, CI  
+6. Neutral `SOUL.md`, examples, README, Docker, CI  
 7. Verify `npm test` and `npm run build`

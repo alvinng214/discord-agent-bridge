@@ -75,5 +75,37 @@ describe("loadConfig", () => {
     });
     expect(cfg.agentBackend).toBe("grok-bot");
     expect(cfg.allowAllUsers).toBe(true);
+    expect(cfg.allowDms).toBe(false);
+    expect(cfg.dmOnly).toBe(false);
+    expect(cfg.allowedGuilds).toEqual([]);
+  });
+
+  it("requires ALLOW_DMS when DM_ONLY is set", () => {
+    const soul = writeSoul();
+    expect(() =>
+      loadConfig({
+        DISCORD_BOT_TOKEN: "tok",
+        SYSTEM_PROMPT_FILE: soul,
+        AGENT_BACKEND: "grok-bot",
+        DISCORD_DM_ONLY: "true",
+        DISCORD_ALLOW_DMS: "false",
+      }),
+    ).toThrow(/DISCORD_DM_ONLY/);
+  });
+
+  it("parses guild allowlist and DM flags", () => {
+    const soul = writeSoul();
+    const cfg = loadConfig({
+      DISCORD_BOT_TOKEN: "tok",
+      SYSTEM_PROMPT_FILE: soul,
+      AGENT_BACKEND: "grok-bot",
+      DISCORD_ALLOW_ALL_USERS: "true",
+      DISCORD_ALLOWED_GUILDS: "g1, g2",
+      DISCORD_ALLOW_DMS: "true",
+      DISCORD_DM_ONLY: "true",
+    });
+    expect(cfg.allowedGuilds).toEqual(["g1", "g2"]);
+    expect(cfg.allowDms).toBe(true);
+    expect(cfg.dmOnly).toBe(true);
   });
 });

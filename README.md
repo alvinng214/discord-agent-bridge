@@ -1,12 +1,8 @@
 # discord-agent-bridge
 
-Open-source **Discord ↔ AI agent bridge**: a long-running gateway bot that authenticates messages, routes them to a pluggable `AgentBackend`, and replies in Discord.
+Open-source **Discord ↔ Grok Bot connector** for anyone who uses Discord (instead of Slack/Teams) to talk to and work with Grok Bots — individuals and small teams.
 
-Built to migrate a Discord gaming helper off Hermes without copying proprietary Hermes source.
-
-> **Phase 1 status:** gateway bot + Hermes-like access control + OpenAI-compatible backend (memory, optional Brave/Tavily tools) + `GrokBotBackend` stub. No real Grok Bot Channels API client, no multi-tenant SaaS, no Azure Functions hosting.
-
-## Architecture
+The bridge handles Discord auth, routing, and reply UX. **Persona, tools, and routines live in the Grok Bot** (or in your `SYSTEM_PROMPT_FILE`), not in this repo. A team assistant or a gaming helper are examples; this project stays general.
 
 ```mermaid
 flowchart LR
@@ -22,11 +18,18 @@ flowchart LR
   B --> D
 ```
 
+### North Star vs Phase 1
+
+| | |
+|--|--|
+| **North Star** | Real `GrokBotBackend` once Grok Bot exposes a Discord/Channels-style inbound API — this repo is the community connector for that. |
+| **Phase 1 (today)** | Runnable `OpenAICompatibleBackend` (xAI / OpenAI / OpenRouter) + team-friendly access control + `GrokBotBackend` stub. No invented Grok Bot API, no multi-tenant SaaS, no Azure Functions hosting. |
+
 ## Requirements
 
 - Node.js **20+**
 - A Discord bot with **Message Content Intent** enabled
-- An OpenAI-compatible API key (xAI, OpenAI, OpenRouter, etc.)
+- An OpenAI-compatible API key for Phase 1 (xAI, OpenAI, OpenRouter, etc.)
 
 ## Discord Developer Portal setup
 
@@ -35,7 +38,7 @@ flowchart LR
 3. Under **Privileged Gateway Intents**, enable **Message Content Intent**.
 4. OAuth2 → URL Generator → scopes: `bot`.  
    Permissions: View Channels, Send Messages, Read Message History.
-5. Invite the bot to a **private** test server first. Keep the bot **private** until allowlists are verified.
+5. Invite to a **private** test server (or enable DMs — see env below). Keep the bot **private** until allowlists are verified.
 
 ## Quick start
 
@@ -49,6 +52,11 @@ npm run build
 npm start
 # or: npm run dev
 ```
+
+Optional personas (copy or point `SYSTEM_PROMPT_FILE` at them):
+
+- [`examples/team-assistant/SOUL.md`](examples/team-assistant/SOUL.md) — small-team Discord assistant
+- [`examples/gaming-helper/SOUL.md`](examples/gaming-helper/SOUL.md) — domain example only
 
 Docker:
 
@@ -65,14 +73,17 @@ docker compose up --build
 | `DISCORD_ALLOW_ALL_USERS` | no | Default `false`. If `true`, skip user/role allowlists |
 | `DISCORD_ALLOWED_USERS` | no | Comma-separated user IDs |
 | `DISCORD_ALLOWED_ROLES` | no | Comma-separated role IDs; empty = no role gate |
+| `DISCORD_ALLOWED_GUILDS` | no | Comma-separated guild IDs; empty = any guild |
+| `DISCORD_ALLOW_DMS` | no | Default `false`. Allow DM conversations with the bot |
+| `DISCORD_DM_ONLY` | no | Default `false`. Ignore all guild messages |
 | `DISCORD_FREE_RESPONSE_CHANNELS` | no | Channel IDs where @mention is not required |
-| `DISCORD_REQUIRE_MENTION` | no | Default `true` outside free-response channels |
+| `DISCORD_REQUIRE_MENTION` | no | Default `true` outside free-response channels (DMs never require mention) |
 | `DISCORD_HOME_CHANNEL` | no | Optional home channel (logged at startup) |
-| `AGENT_BACKEND` | no | `openai` (default) or `grok-bot` (stub) |
+| `AGENT_BACKEND` | no | `openai` (Phase 1 default) or `grok-bot` (stub / North Star) |
 | `API_BASE_URL` | if openai | e.g. `https://api.x.ai/v1` or `https://api.openai.com/v1` |
 | `API_KEY` | if openai | Provider API key |
 | `MODEL` | if openai | Model id |
-| `SYSTEM_PROMPT_FILE` | no | Default `SOUL.md` |
+| `SYSTEM_PROMPT_FILE` | no | Default `SOUL.md` (neutral); swap for your agent persona |
 | `TEMPERATURE` | no | Default `0.7` |
 | `MAX_TOKENS` | no | Default `1024` |
 | `MEMORY_MAX_MESSAGES` | no | Default `20` (per channel/thread key) |
@@ -81,9 +92,9 @@ docker compose up --build
 | `BRAVE_API_KEY` | no | Enables Brave web search tool |
 | `TAVILY_API_KEY` | no | Enables Tavily web search tool |
 
-Access control fails closed: if `DISCORD_ALLOW_ALL_USERS` is false and both allowlists are empty, nobody is served.
+Access control fails closed: if `DISCORD_ALLOW_ALL_USERS` is false and both user/role allowlists are empty, nobody is served.
 
-Web search tools are registered **only** when at least one of `BRAVE_API_KEY` / `TAVILY_API_KEY` is set.
+Web search tools are registered **only** when at least one of `BRAVE_API_KEY` / `TAVILY_API_KEY` is set (Phase 1 OpenAI-compatible path).
 
 ## Scripts
 
@@ -98,17 +109,17 @@ Web search tools are registered **only** when at least one of `BRAVE_API_KEY` / 
 
 - **Never commit** `.env`, tokens, or API keys. `.gitignore` excludes `.env`.
 - Keep the Discord application **private** until you trust your allowlists.
-- Prefer a private ops server for the first cutover.
+- Prefer a private server (or DM-only personal use) for the first run.
 - The bot ignores other bots and itself; replies are split near 1900 characters.
 
-## Hermes migration
+## Migrating from another Discord agent host
 
-1. Map Hermes allowlists → `DISCORD_ALLOWED_USERS` / `DISCORD_ALLOWED_ROLES` / `DISCORD_FREE_RESPONSE_CHANNELS`.
-2. Copy your soul / system prompt into `SOUL.md` (or set `SYSTEM_PROMPT_FILE`). Do **not** copy proprietary Hermes source code.
-3. Point `API_BASE_URL` / `API_KEY` / `MODEL` at the same OpenAI-compatible provider, or switch to xAI / OpenRouter.
-4. Stop Hermes’ Discord listener, start this bridge as an always-on process (`npm start` or Docker), smoke-test in `DISCORD_HOME_CHANNEL`.
+1. Map allowlists → `DISCORD_ALLOWED_USERS` / `DISCORD_ALLOWED_ROLES` / `DISCORD_ALLOWED_GUILDS` / `DISCORD_FREE_RESPONSE_CHANNELS`.
+2. Point `SYSTEM_PROMPT_FILE` at your soul/instructions (or copy into `SOUL.md`). Keep proprietary host code out of this repo.
+3. Use `AGENT_BACKEND=openai` with your OpenAI-compatible provider until the real Grok Bot inbound API lands.
+4. Run as an always-on process (`npm start` or Docker); smoke-test in `DISCORD_HOME_CHANNEL` or a DM.
 
-See [docs/PLAN.md](docs/PLAN.md) for Phase 1 details and Phase 2 notes (real Grok Bot backend later).
+See [docs/PLAN.md](docs/PLAN.md) for the living Phase 1 plan and Phase 2 notes (`GrokBotBackend`).
 
 ## License
 

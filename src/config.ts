@@ -8,6 +8,9 @@ export interface Config {
   allowedRoles: string[];
   allowAllUsers: boolean;
   allowedUsers: string[];
+  allowedGuilds: string[];
+  allowDms: boolean;
+  dmOnly: boolean;
   freeResponseChannels: string[];
   requireMention: boolean;
   homeChannel: string | null;
@@ -84,11 +87,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (!model) throw new Error("MODEL is required when AGENT_BACKEND=openai");
   }
 
+  const allowDms = parseBool(env.DISCORD_ALLOW_DMS, false);
+  const dmOnly = parseBool(env.DISCORD_DM_ONLY, false);
+  if (dmOnly && !allowDms) {
+    throw new Error("DISCORD_DM_ONLY=true requires DISCORD_ALLOW_DMS=true");
+  }
+
   return {
     discordToken,
     allowedRoles: parseCsvIds(env.DISCORD_ALLOWED_ROLES),
     allowAllUsers: parseBool(env.DISCORD_ALLOW_ALL_USERS, false),
     allowedUsers: parseCsvIds(env.DISCORD_ALLOWED_USERS),
+    allowedGuilds: parseCsvIds(env.DISCORD_ALLOWED_GUILDS),
+    allowDms,
+    dmOnly,
     freeResponseChannels: parseCsvIds(env.DISCORD_FREE_RESPONSE_CHANNELS),
     requireMention: parseBool(env.DISCORD_REQUIRE_MENTION, true),
     homeChannel: env.DISCORD_HOME_CHANNEL?.trim() || null,

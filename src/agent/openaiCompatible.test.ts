@@ -12,7 +12,7 @@ describe("GrokBotBackend", () => {
         authorDisplayName: "n",
         content: "hi",
       }),
-    ).rejects.toThrow(/not implemented — awaiting Grok Bot Channels API/i);
+    ).rejects.toThrow(/not implemented — awaiting Grok Bot Channels-style inbound API/i);
   });
 });
 

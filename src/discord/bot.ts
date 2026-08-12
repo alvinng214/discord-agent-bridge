@@ -2,6 +2,7 @@ import {
   Client,
   GatewayIntentBits,
   Partials,
+  ChannelType,
   type Message,
   type OmitPartialGroupDMChannel,
 } from "discord.js";
@@ -11,13 +12,18 @@ import { evaluateAccess } from "./access.js";
 import { RateLimiter } from "./rateLimit.js";
 import { sendSplitReply, withTyping } from "./reply.js";
 
-export function createDiscordClient(): Client {
+export function createDiscordClient(config: Config): Client {
+  const intents: GatewayIntentBits[] = [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+  ];
+  if (config.allowDms) {
+    intents.push(GatewayIntentBits.DirectMessages);
+  }
+
   return new Client({
-    intents: [
-      GatewayIntentBits.Guilds,
-      GatewayIntentBits.GuildMessages,
-      GatewayIntentBits.MessageContent,
-    ],
+    intents,
     partials: [Partials.Channel],
   });
 }
@@ -57,7 +63,10 @@ async function handleMessage(
   message: Message,
 ): Promise<void> {
   if (!client.user) return;
-  if (!message.guild) return;
+
+  const isDm =
+    message.channel.type === ChannelType.DM ||
+    message.guild === null;
 
   const botMentioned = message.mentions.users.has(client.user.id);
   const authorRoleIds = message.member?.roles.cache.map((r) => r.id) ?? [];
@@ -67,6 +76,8 @@ async function handleMessage(
       authorId: message.author.id,
       authorRoleIds,
       channelId: message.channelId,
+      guildId: message.guildId,
+      isDm,
       botMentioned,
       isBot: message.author.bot,
       isSelf: message.author.id === client.user.id,
@@ -75,6 +86,9 @@ async function handleMessage(
       allowAllUsers: config.allowAllUsers,
       allowedUsers: config.allowedUsers,
       allowedRoles: config.allowedRoles,
+      allowedGuilds: config.allowedGuilds,
+      allowDms: config.allowDms,
+      dmOnly: config.dmOnly,
       freeResponseChannels: config.freeResponseChannels,
       requireMention: config.requireMention,
     },
@@ -93,7 +107,9 @@ async function handleMessage(
   const content = stripBotMention(message.content, client.user.id);
   if (!content) {
     await message.reply({
-      content: "Mention me with a question (or say something in a free-response channel).",
+      content: isDm
+        ? "Send me a message with what you need help with."
+        : "Mention me with a question (or say something in a free-response channel).",
       allowedMentions: { repliedUser: false },
     });
     return;
@@ -119,13 +135,16 @@ async function handleMessage(
 }
 
 export async function startBot(config: Config, backend: AgentBackend): Promise<Client> {
-  const client = createDiscordClient();
+  const client = createDiscordClient(config);
   attachMessageHandler(client, config, backend);
 
   client.once("ready", () => {
     console.log(`[bridge] logged in as ${client.user?.tag} (backend=${backend.name})`);
     if (config.homeChannel) {
       console.log(`[bridge] home channel configured: ${config.homeChannel}`);
+    }
+    if (config.allowDms) {
+      console.log(`[bridge] DMs enabled${config.dmOnly ? " (DM-only mode)" : ""}`);
     }
   });
 
