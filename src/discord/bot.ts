@@ -39,6 +39,23 @@ function conversationKey(message: Message): string {
   return message.channelId;
 }
 
+
+function channelContext(message: Message): {
+  channelName?: string;
+  channelTopic?: string | null;
+  guildName?: string;
+} {
+  const guildName = message.guild?.name;
+  const channel = message.channel;
+  if ("name" in channel && typeof channel.name === "string") {
+    const topic =
+      "topic" in channel && typeof channel.topic === "string" ? channel.topic : null;
+    return { channelName: channel.name, channelTopic: topic, guildName };
+  }
+  return { guildName: guildName ?? undefined };
+}
+
+
 export function attachMessageHandler(
   client: Client,
   config: Config,
@@ -121,6 +138,7 @@ async function handleMessage(
         conversationKey: conversationKey(message),
         authorDisplayName: message.member?.displayName ?? message.author.username,
         content,
+        ...channelContext(message),
       }),
     );
     await sendSplitReply(message, result.text);

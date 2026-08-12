@@ -107,7 +107,47 @@ describe("OpenAICompatibleBackend", () => {
     expect(res.text).toBe("Collect murky water then boil it.");
     expect(calls).toBe(4);
   });
+
+  it("includes channel context in the user message", async () => {
+    const calls: Array<{ messages: Array<{ role: string; content: string }> }> = [];
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      calls.push(JSON.parse(String(init?.body)));
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { role: "assistant", content: "Check houses and traders." } }],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    };
+
+    const backend = new OpenAICompatibleBackend({
+      apiBaseUrl: "https://api.example.com/v1",
+      apiKey: "k",
+      model: "m",
+      systemPrompt: "sys",
+      temperature: 0.2,
+      maxTokens: 64,
+      memoryMaxMessages: 10,
+      fetchImpl,
+    });
+
+    await backend.generate({
+      conversationKey: "chan",
+      authorDisplayName: "Nate",
+      content: "where are cooking pots?",
+      channelName: "7dtd",
+      channelTopic: "7 Days to Die",
+      guildName: "Farmers",
+    });
+
+    const userMsg = calls[0]!.messages.find((m) => m.role === "user");
+    expect(userMsg?.content).toContain("#7dtd");
+    expect(userMsg?.content).toContain("topic: 7 Days to Die");
+    expect(userMsg?.content).toContain("where are cooking pots?");
+  });
+
 });
+
 
 describe("web search tools", () => {
   it("exposes no tools when keys are unset", () => {

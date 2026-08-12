@@ -54,7 +54,12 @@ export class OpenAICompatibleBackend implements AgentBackend {
   }
 
   async generate(request: AgentRequest): Promise<AgentResponse> {
-    const userLine = `${request.authorDisplayName}: ${request.content}`;
+    const contextBits: string[] = [];
+    if (request.channelName) contextBits.push(`#${request.channelName}`);
+    if (request.channelTopic?.trim()) contextBits.push(`topic: ${request.channelTopic.trim()}`);
+    if (request.guildName) contextBits.push(`server: ${request.guildName}`);
+    const contextPrefix = contextBits.length > 0 ? `[${contextBits.join(" | ")}] ` : "";
+    const userLine = `${contextPrefix}${request.authorDisplayName}: ${request.content}`;
     this.memory.append(request.conversationKey, { role: "user", content: userLine });
 
     const messages: ChatMessage[] = [
