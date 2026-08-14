@@ -6,7 +6,8 @@ services:
       - .env
     ports:
       # Authenticated Grok Bot callback (POST /internal/reply). Not the Grok Bot gateway.
-      - "8788:8788"
+      # Host and container ports both follow BRIDGE_HTTP_PORT (Compose interpolates from .env).
+      - "${BRIDGE_HTTP_PORT:-8788}:${BRIDGE_HTTP_PORT:-8788}"
     volumes:
       # Optional: override the default soul without rebuilding
       - ./SOUL.md:/app/SOUL.md:ro

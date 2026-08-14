@@ -15,15 +15,20 @@ export class AgentCallbackError extends Error {
   }
 }
 
+export type CompleteResult = "missing" | "ok" | "delivery_failed";
+
 interface PendingEntry {
   resolve: (text: string) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
+  deadlineMs: number;
   deliver?: (text: string) => Promise<void>;
+  delivering: boolean;
 }
 
 /**
  * In-process waiters for Grok Bot agent callbacks keyed by correlationId.
+ * Entries stay registered until Discord delivery succeeds (or the waiter times out / is failed).
  */
 export class PendingReplyStore {
   private readonly pending = new Map<string, PendingEntry>();
@@ -38,28 +43,41 @@ export class PendingReplyStore {
     }
 
     return new Promise<string>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(correlationId);
-        reject(new ReplyTimeoutError(correlationId));
-      }, timeoutMs);
-      this.pending.set(correlationId, { resolve, reject, timer, deliver });
+      const entry = {
+        resolve,
+        reject,
+        deadlineMs: Date.now() + timeoutMs,
+        deliver,
+        delivering: false,
+      } as PendingEntry;
+      this.pending.set(correlationId, entry);
+      this.armTimeout(correlationId, entry);
     });
   }
 
-  async complete(correlationId: string, text: string): Promise<boolean> {
+  async complete(correlationId: string, text: string): Promise<CompleteResult> {
     const entry = this.pending.get(correlationId);
-    if (!entry) return false;
+    if (!entry) return "missing";
+    if (entry.delivering) return "delivery_failed";
+
+    entry.delivering = true;
     clearTimeout(entry.timer);
-    this.pending.delete(correlationId);
+
     try {
       if (entry.deliver) {
         await entry.deliver(text);
       }
+      this.pending.delete(correlationId);
       entry.resolve(text);
-    } catch (err) {
-      entry.reject(err instanceof Error ? err : new Error(String(err)));
+      return "ok";
+    } catch {
+      entry.delivering = false;
+      if (!this.pending.has(correlationId)) {
+        return "missing";
+      }
+      this.armTimeout(correlationId, entry);
+      return "delivery_failed";
     }
-    return true;
   }
 
   fail(correlationId: string, error: Error): boolean {
@@ -77,5 +95,18 @@ export class PendingReplyStore {
 
   get size(): number {
     return this.pending.size;
+  }
+
+  private armTimeout(correlationId: string, entry: PendingEntry): void {
+    const remaining = entry.deadlineMs - Date.now();
+    if (remaining <= 0) {
+      this.pending.delete(correlationId);
+      entry.reject(new ReplyTimeoutError(correlationId));
+      return;
+    }
+    entry.timer = setTimeout(() => {
+      this.pending.delete(correlationId);
+      entry.reject(new ReplyTimeoutError(correlationId));
+    }, remaining);
   }
 }

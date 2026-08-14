@@ -92,7 +92,7 @@ describe("GrokBotBackend", () => {
     expect(sent.prompt).toContain("conversationKey: channel:123");
 
     const correlationId = correlationIdFromPrompt(sent.prompt);
-    await expect(pending.complete(correlationId, "Check houses near traders.")).resolves.toBe(true);
+    await expect(pending.complete(correlationId, "Check houses near traders.")).resolves.toBe("ok");
     await expect(generatePromise).resolves.toEqual({
       text: "Check houses near traders.",
       delivered: false,

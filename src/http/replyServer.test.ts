@@ -141,4 +141,44 @@ describe("POST /internal/reply", () => {
     await expect(waiter).resolves.toBe("Pots are in houses and trader inventories.");
     expect(pending.has("corr-1")).toBe(false);
   });
+
+  it("keeps the pending entry when Discord delivery fails so a later retry can complete", async () => {
+    const pending = new PendingReplyStore();
+    const server = await listen(pending);
+    servers.push(server);
+
+    let attempts = 0;
+    const waiter = pending.register("corr-retry", 5_000, async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("discord 502");
+    });
+
+    const first = await postReply(server, {
+      body: { correlationId: "corr-retry", text: "hello from Discord" },
+    });
+    expect(first.status).toBe(503);
+    expect(first.json.error).toBe("delivery_failed");
+    expect(pending.has("corr-retry")).toBe(true);
+
+    let settled = false;
+    void waiter.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(settled).toBe(false);
+
+    const second = await postReply(server, {
+      body: { correlationId: "corr-retry", text: "hello from Discord" },
+    });
+    expect(second.status).toBe(200);
+    expect(second.json.ok).toBe(true);
+    await expect(waiter).resolves.toBe("hello from Discord");
+    expect(attempts).toBe(2);
+    expect(pending.has("corr-retry")).toBe(false);
+  });
 });

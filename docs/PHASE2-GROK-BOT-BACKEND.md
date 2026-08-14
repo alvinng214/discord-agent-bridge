@@ -58,6 +58,7 @@ flowchart LR
 | Body | `{ "correlationId": string, "text": string }` (`error` optional) |
 | Unknown / expired id | 404 |
 | Missing fields | 400 |
+| Discord delivery failure | 503 `{ "error": "delivery_failed" }` — pending entry kept for retry |
 | Success | 200 `{ "ok": true }` |
 
 This is **not** an unauthenticated public webhook. Do not log `BRIDGE_REPLY_TOKEN` or `GROK_BOT_TOKEN`.
@@ -76,7 +77,7 @@ This is **not** an unauthenticated public webhook. Do not log `BRIDGE_REPLY_TOKE
 | `GROK_BOT_AGENT_ID` | yes | Target agent id (from env; do not hardcode a single id) |
 | `GROK_BOT_TIMEOUT_MS` | no | Default `120000` |
 | `BRIDGE_HTTP_HOST` | no | Default `0.0.0.0` |
-| `BRIDGE_HTTP_PORT` | no | Default `8788` (Compose publishes `8788:8788`) |
+| `BRIDGE_HTTP_PORT` | no | Default `8788` (Compose maps `${BRIDGE_HTTP_PORT:-8788}:${BRIDGE_HTTP_PORT:-8788}`) |
 | `BRIDGE_PUBLIC_URL` | yes | URL the Grok Bot computer uses to reach the bridge |
 | `BRIDGE_REPLY_TOKEN` | yes | Shared secret for the callback |
 

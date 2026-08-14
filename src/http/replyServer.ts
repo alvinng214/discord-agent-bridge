@@ -136,8 +136,13 @@ async function handleReply(
     return;
   }
 
-  if (!(await opts.pending.complete(correlationId, text))) {
+  const result = await opts.pending.complete(correlationId, text);
+  if (result === "missing") {
     sendJson(res, 404, { error: "unknown_correlation_id" });
+    return;
+  }
+  if (result === "delivery_failed") {
+    sendJson(res, 503, { error: "delivery_failed" });
     return;
   }
 

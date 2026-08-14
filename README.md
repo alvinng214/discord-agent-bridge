@@ -91,7 +91,7 @@ docker compose up --build
 | `GROK_BOT_AGENT_ID` | if grok-bot | Target agent id (from env, not hardcoded) |
 | `GROK_BOT_TIMEOUT_MS` | no | Default `120000` — how long `generate()` waits for `/internal/reply` |
 | `BRIDGE_HTTP_HOST` | no | Default `0.0.0.0` — listen address for the callback server |
-| `BRIDGE_HTTP_PORT` | no | Default `8788` — published by Docker Compose |
+| `BRIDGE_HTTP_PORT` | no | Default `8788`. Compose maps host and container to this port (`${BRIDGE_HTTP_PORT:-8788}:${BRIDGE_HTTP_PORT:-8788}`) |
 | `BRIDGE_PUBLIC_URL` | if grok-bot | URL the **Grok Bot computer** uses to reach this bridge (not `localhost` on that machine) |
 | `BRIDGE_REPLY_TOKEN` | if grok-bot | Shared secret for `Authorization: Bearer` on `POST /internal/reply` (password) |
 | `SYSTEM_PROMPT_FILE` | no | Default `SOUL.md` (neutral); swap for your agent persona |
