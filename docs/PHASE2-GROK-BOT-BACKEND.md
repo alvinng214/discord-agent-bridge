@@ -63,25 +63,64 @@ flowchart LR
 
 This is **not** an unauthenticated public webhook. Do not log `BRIDGE_REPLY_TOKEN` or `GROK_BOT_TOKEN`.
 
-`replyUrl` given to the agent is `BRIDGE_PUBLIC_URL + /internal/reply`. The Grok Bot computer is a **different machine** than the Docker host running the bridge, so `localhost` on the Grok Bot computer is not the bridge. Reachability options: Tailscale, SSH tunnel, or another private path.
+`replyUrl` given to the agent is `BRIDGE_PUBLIC_URL + /internal/reply`. That URL must be reachable from the Grok Bot computer. Two topologies:
 
-**Never** expose the Grok Bot gateway port (`:1340`) to the internet. **Never** put `DISCORD_BOT_TOKEN` on the Grok Bot side.
+| Topology | Where the bridge runs | Typical URLs | Network |
+|----------|----------------------|--------------|---------|
+| **Colocated (works today)** | Same computer as the Grok Bot agent | `GROK_BOT_GATEWAY_URL=http://127.0.0.1:1340`, `BRIDGE_PUBLIC_URL=http://127.0.0.1:8788`, `BRIDGE_HTTP_HOST=127.0.0.1` | No Tailscale. Bind the callback to localhost only. |
+| **Split-machine** | A different machine (for example Docker on a laptop) | Gateway URL is the Grok Bot host; `BRIDGE_PUBLIC_URL` is the bridge host | `localhost` on the Grok Bot computer is **not** the bridge. Use Tailscale, an SSH tunnel, or another private path. |
+
+**Never** expose the Grok Bot gateway port (`:1340`) or the callback port (`:8788`) to the internet. Keep `DISCORD_BOT_TOKEN` in the bridge's local `.env` only — never in the Grok Bot agent, `gateway.json`, or git.
 
 ## Env (grok-bot mode)
 
 | Variable | Required | Purpose |
 |----------|----------|---------|
 | `AGENT_BACKEND=grok-bot` | yes (to select) | Select this backend |
-| `GROK_BOT_GATEWAY_URL` | yes | e.g. `http://host:1340` |
-| `GROK_BOT_TOKEN` | yes | Bearer from `gateway.json` |
-| `GROK_BOT_AGENT_ID` | yes | Target agent id (from env; do not hardcode a single id) |
+| `GROK_BOT_GATEWAY_URL` | yes | Colocated: `http://127.0.0.1:1340`. Split-machine: private host URL. |
+| `GROK_BOT_TOKEN` | yes | Bearer from that computer's `gateway.json` (password) |
+| `GROK_BOT_AGENT_ID` | yes | Target agent id from `POST /api/listAgents` (from env; do not hardcode a real id) |
 | `GROK_BOT_TIMEOUT_MS` | no | Default `120000` |
-| `BRIDGE_HTTP_HOST` | no | Default `0.0.0.0` |
+| `BRIDGE_HTTP_HOST` | no | Default `0.0.0.0`. Colocated: `127.0.0.1` |
 | `BRIDGE_HTTP_PORT` | no | Default `8788` (Compose maps `${BRIDGE_HTTP_PORT:-8788}:${BRIDGE_HTTP_PORT:-8788}`) |
-| `BRIDGE_PUBLIC_URL` | yes | URL the Grok Bot computer uses to reach the bridge |
-| `BRIDGE_REPLY_TOKEN` | yes | Shared secret for the callback |
+| `BRIDGE_PUBLIC_URL` | yes | URL the Grok Bot computer uses to reach the bridge. Colocated: `http://127.0.0.1:8788` |
+| `BRIDGE_REPLY_TOKEN` | yes | Shared secret for the callback (generate locally; do not commit) |
 
 OpenAI-compatible remains the default. grok-bot fails closed if required vars are missing.
+
+### Colocated setup (same computer)
+
+This is the path that works today without Tailscale or a tunnel.
+
+**Prerequisites:** Node.js 20+ on the Grok Bot computer; Discord bot token in a local `.env` only; gateway on `127.0.0.1:1340`.
+
+1. Copy `.env.example` → `.env` on the Grok Bot computer. Set `AGENT_BACKEND=grok-bot` and:
+
+   ```
+   GROK_BOT_GATEWAY_URL=http://127.0.0.1:1340
+   BRIDGE_PUBLIC_URL=http://127.0.0.1:8788
+   BRIDGE_HTTP_HOST=127.0.0.1
+   ```
+
+2. `GROK_BOT_TOKEN` — bearer from that computer's `gateway.json`. Grok Bot computers commonly store this at `/home/box/sand-data/gateway.json`; use the path that computer actually uses. Treat the token like a password.
+
+3. `GROK_BOT_AGENT_ID` — from `POST /api/listAgents` on the gateway (`Authorization: Bearer <GROK_BOT_TOKEN>`). Pick the target agent id from the response. Do not hardcode a real id in this repo.
+
+4. Generate `BRIDGE_REPLY_TOKEN` (`openssl rand -hex 32` or equivalent). Do not commit it.
+
+5. Set Discord allowlists. Keep the Discord application **private**.
+
+6. `npm ci && npm run build && npm start` (or a simple supervisor). A Grok Bot computer **Update** keeps files on disk but stops running processes, so a restart wrapper is useful:
+
+   ```bash
+   while true; do npm start; echo "bridge exited; restarting in 5s"; sleep 5; done
+   ```
+
+In this mode, **never** expose `:1340` or `:8788` beyond localhost.
+
+### Split-machine setup
+
+When the bridge runs on a different machine, `localhost` on the Grok Bot computer is not the bridge. Point `GROK_BOT_GATEWAY_URL` at a private path to `:1340` (Tailscale, SSH tunnel, or LAN). Set `BRIDGE_PUBLIC_URL` to a URL the Grok Bot computer can reach (not `http://127.0.0.1:8788` on that computer unless you have tunneled it there). Default `BRIDGE_HTTP_HOST=0.0.0.0` is typical so the callback listens on the private interface. Still never publish `:1340` or `:8788` to the internet.
 
 ## Prompt block (what the agent must parse)
 
@@ -106,7 +145,7 @@ A documented Discord/Channels inbound API would replace this callback. Until the
 
 ## Cutover / smoke
 
-1. Set grok-bot env vars; keep `AGENT_BACKEND=openai` as fallback.
+1. Set grok-bot env vars for the topology you are using (colocated localhost, or split-machine + Tailscale/tunnel); keep `AGENT_BACKEND=openai` as fallback.
 2. Confirm `BRIDGE_PUBLIC_URL` is reachable from the Grok Bot computer (`POST /internal/reply` with a wrong token should 401; do not test with real tokens in logs).
 3. Mention the bot in Discord → gateway `sendPrompt` → agent callback → Discord reply.
 4. If the unofficial gateway changes, park grok-bot mode and stay on OpenAI.
