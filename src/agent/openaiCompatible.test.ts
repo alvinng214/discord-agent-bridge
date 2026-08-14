@@ -1,20 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { GrokBotBackend } from "./grokBot.js";
 import { OpenAICompatibleBackend } from "./openaiCompatible.js";
 import { createWebSearchProviders, webSearchToolDefinitions } from "./tools/webSearch.js";
-
-describe("GrokBotBackend", () => {
-  it("throws a clear not-implemented error", async () => {
-    const backend = new GrokBotBackend();
-    await expect(
-      backend.generate({
-        conversationKey: "c",
-        authorDisplayName: "n",
-        content: "hi",
-      }),
-    ).rejects.toThrow(/not implemented — awaiting Grok Bot Channels-style inbound API/i);
-  });
-});
 
 describe("OpenAICompatibleBackend", () => {
   it("calls chat completions and stores assistant reply", async () => {

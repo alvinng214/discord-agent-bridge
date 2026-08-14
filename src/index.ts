@@ -1,15 +1,13 @@
 import "dotenv/config";
 import type { AgentBackend } from "./agent/backend.js";
-import { GrokBotBackend } from "./agent/grokBot.js";
+import { GrokBotBackend, joinUrl } from "./agent/grokBot.js";
 import { OpenAICompatibleBackend } from "./agent/openaiCompatible.js";
 import { loadConfig } from "./config.js";
 import { startBot } from "./discord/bot.js";
+import { PendingReplyStore } from "./http/pendingReplies.js";
+import { startReplyServer } from "./http/replyServer.js";
 
-function createBackend(config: ReturnType<typeof loadConfig>): AgentBackend {
-  if (config.agentBackend === "grok-bot") {
-    return new GrokBotBackend();
-  }
-
+function createOpenAiBackend(config: ReturnType<typeof loadConfig>): AgentBackend {
   return new OpenAICompatibleBackend({
     apiBaseUrl: config.apiBaseUrl!,
     apiKey: config.apiKey!,
@@ -23,15 +21,48 @@ function createBackend(config: ReturnType<typeof loadConfig>): AgentBackend {
   });
 }
 
+async function createGrokBotBackend(config: ReturnType<typeof loadConfig>): Promise<AgentBackend> {
+  const pending = new PendingReplyStore();
+  const replyUrl = joinUrl(config.bridgePublicUrl!, "/internal/reply");
+  const server = await startReplyServer({
+    host: config.bridgeHttpHost,
+    port: config.bridgeHttpPort,
+    replyToken: config.bridgeReplyToken,
+    pending,
+  });
+  console.log(`[bridge] reply endpoint listening on ${server.host}:${server.port} path=/internal/reply`);
+  return new GrokBotBackend({
+    gatewayUrl: config.grokBotGatewayUrl!,
+    token: config.grokBotToken!,
+    agentId: config.grokBotAgentId!,
+    timeoutMs: config.grokBotTimeoutMs,
+    replyUrl,
+    replyToken: config.bridgeReplyToken!,
+    pending,
+  });
+}
+
+async function createBackend(config: ReturnType<typeof loadConfig>): Promise<AgentBackend> {
+  if (config.agentBackend === "grok-bot") {
+    return createGrokBotBackend(config);
+  }
+  return createOpenAiBackend(config);
+}
+
 async function main(): Promise<void> {
   const config = loadConfig();
+  const grokBits =
+    config.agentBackend === "grok-bot"
+      ? ` gateway=${config.grokBotGatewayUrl} agentId=${config.grokBotAgentId} publicUrl=${config.bridgePublicUrl}`
+      : "";
   console.log(
     `[bridge] backend=${config.agentBackend}` +
       (config.model ? ` model=${config.model}` : "") +
       (config.apiBaseUrl ? ` base=${config.apiBaseUrl}` : "") +
+      grokBits +
       ` soul=${config.systemPromptFile}`,
   );
-  const backend = createBackend(config);
+  const backend = await createBackend(config);
   await startBot(config, backend);
 }
 

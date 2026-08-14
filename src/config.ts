@@ -27,6 +27,14 @@ export interface Config {
   rateLimitWindowMs: number;
   braveApiKey: string | null;
   tavilyApiKey: string | null;
+  grokBotGatewayUrl: string | null;
+  grokBotToken: string | null;
+  grokBotAgentId: string | null;
+  grokBotTimeoutMs: number;
+  bridgeHttpHost: string;
+  bridgeHttpPort: number;
+  bridgePublicUrl: string | null;
+  bridgeReplyToken: string | null;
 }
 
 function parseBool(value: string | undefined, defaultValue: boolean): boolean {
@@ -91,10 +99,43 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 - Do not claim to be ChatGPT, OpenAI, Claude, or any other vendor unless the model id actually is that product.`;
   }
 
+  const grokBotGatewayUrl = env.GROK_BOT_GATEWAY_URL?.trim() || null;
+  const grokBotToken = env.GROK_BOT_TOKEN?.trim() || null;
+  const grokBotAgentId = env.GROK_BOT_AGENT_ID?.trim() || null;
+  const grokBotTimeoutMs = parseNumber(env.GROK_BOT_TIMEOUT_MS, 120_000);
+  const bridgeHttpHost = env.BRIDGE_HTTP_HOST?.trim() || "0.0.0.0";
+  const bridgeHttpPort = parseNumber(env.BRIDGE_HTTP_PORT, 8788);
+  const bridgePublicUrl = env.BRIDGE_PUBLIC_URL?.trim() || null;
+  const bridgeReplyToken = env.BRIDGE_REPLY_TOKEN?.trim() || null;
+
   if (agentBackend === "openai") {
     if (!apiBaseUrl) throw new Error("API_BASE_URL is required when AGENT_BACKEND=openai");
     if (!apiKey) throw new Error("API_KEY is required when AGENT_BACKEND=openai");
     if (!model) throw new Error("MODEL is required when AGENT_BACKEND=openai");
+  }
+
+  if (agentBackend === "grok-bot") {
+    if (!grokBotGatewayUrl) {
+      throw new Error("GROK_BOT_GATEWAY_URL is required when AGENT_BACKEND=grok-bot");
+    }
+    if (!grokBotToken) {
+      throw new Error("GROK_BOT_TOKEN is required when AGENT_BACKEND=grok-bot");
+    }
+    if (!grokBotAgentId) {
+      throw new Error("GROK_BOT_AGENT_ID is required when AGENT_BACKEND=grok-bot");
+    }
+    if (!bridgePublicUrl) {
+      throw new Error("BRIDGE_PUBLIC_URL is required when AGENT_BACKEND=grok-bot");
+    }
+    if (!bridgeReplyToken) {
+      throw new Error("BRIDGE_REPLY_TOKEN is required when AGENT_BACKEND=grok-bot");
+    }
+    if (grokBotTimeoutMs <= 0) {
+      throw new Error("GROK_BOT_TIMEOUT_MS must be a positive number");
+    }
+    if (!Number.isInteger(bridgeHttpPort) || bridgeHttpPort < 1 || bridgeHttpPort > 65535) {
+      throw new Error("BRIDGE_HTTP_PORT must be an integer between 1 and 65535");
+    }
   }
 
   const allowDms = parseBool(env.DISCORD_ALLOW_DMS, false);
@@ -127,5 +168,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     rateLimitWindowMs: parseNumber(env.RATE_LIMIT_WINDOW_MS, 60_000),
     braveApiKey: env.BRAVE_API_KEY?.trim() || null,
     tavilyApiKey: env.TAVILY_API_KEY?.trim() || null,
+    grokBotGatewayUrl,
+    grokBotToken,
+    grokBotAgentId,
+    grokBotTimeoutMs,
+    bridgeHttpHost,
+    bridgeHttpPort,
+    bridgePublicUrl,
+    bridgeReplyToken,
   };
 }

@@ -12,7 +12,7 @@ Use-case specificity (persona, tools, routines) belongs in the **Grok Bot**, not
 
 Ship a real `GrokBotBackend` once Grok Bot exposes a Discord/Channels-style inbound API. This repo is the community connector for that path.
 
-**Phase 1** keeps `OpenAICompatibleBackend` as the runnable stand-in (xAI / OpenAI / OpenRouter chat completions) so individuals and teams can use Discord today. `GrokBotBackend` is an explicit stub until the API exists — we do not invent it.
+**Phase 1** keeps `OpenAICompatibleBackend` as the default runnable path (xAI / OpenAI / OpenRouter chat completions). `GrokBotBackend` can optionally wake a Grok Bot agent via that computer's unofficial private HTTP gateway plus an authenticated bridge callback — not an official Discord/Channels API.
 
 ## Phase 1 scope
 
@@ -39,9 +39,10 @@ flowchart LR
   A --> R[Rate limit]
   R --> M[AgentBackend]
   M --> O[OpenAICompatibleBackend]
-  M --> G[GrokBotBackend stub]
+  M --> G[GrokBotBackend]
   O --> T[Optional web search]
   O --> Mem[Per-channel memory]
+  G --> GW[Grok Bot computer gateway]
   M --> B
   B --> D
 ```
@@ -57,7 +58,8 @@ flowchart LR
 | `src/discord/bot.ts` | Client, messageCreate handler, ignore bots/self |
 | `src/agent/backend.ts` | `AgentBackend` interface |
 | `src/agent/openaiCompatible.ts` | Phase 1 runnable: chat completions + memory + optional tools |
-| `src/agent/grokBot.ts` | Stub — awaiting Grok Bot Channels-style API |
+| `src/agent/grokBot.ts` | Unofficial computer-gateway client (`POST /api/sendPrompt`) + callback wait |
+| `src/http/replyServer.ts` | Authenticated `POST /internal/reply` for the Grok Bot agent |
 | `src/agent/memory.ts` | In-memory per-channel/thread history with length cap |
 | `src/agent/tools/webSearch.ts` | Brave and/or Tavily if keys present |
 | `src/index.ts` | Load config, pick backend, start bot |
@@ -77,7 +79,15 @@ flowchart LR
 | `DISCORD_FREE_RESPONSE_CHANNELS` | no | Channel IDs: reply without @mention |
 | `DISCORD_REQUIRE_MENTION` | no | Default `true` outside free-response channels (DMs never require mention) |
 | `DISCORD_HOME_CHANNEL` | no | Optional home channel ID (logged / future routing) |
-| `AGENT_BACKEND` | no | `openai` (default, Phase 1) \| `grok-bot` (stub → North Star) |
+| `AGENT_BACKEND` | no | `openai` (default) \| `grok-bot` (unofficial gateway + callback) |
+| `GROK_BOT_GATEWAY_URL` | if grok-bot | Private computer gateway base (do not expose `:1340` publicly) |
+| `GROK_BOT_TOKEN` | if grok-bot | Bearer from that computer's `gateway.json` |
+| `GROK_BOT_AGENT_ID` | if grok-bot | Target agent id |
+| `GROK_BOT_TIMEOUT_MS` | no | Default `120000` |
+| `BRIDGE_HTTP_HOST` | no | Default `0.0.0.0` |
+| `BRIDGE_HTTP_PORT` | no | Default `8788` |
+| `BRIDGE_PUBLIC_URL` | if grok-bot | Reachable from the Grok Bot computer |
+| `BRIDGE_REPLY_TOKEN` | if grok-bot | Bearer for `POST /internal/reply` |
 | `API_BASE_URL` | if openai | e.g. `https://api.x.ai/v1` |
 | `API_KEY` | if openai | Provider API key |
 | `MODEL` | if openai | Model id |
@@ -128,7 +138,7 @@ Point `SYSTEM_PROMPT_FILE` at an example, or replace with your Grok Bot’s own 
 
 | Layer | Coverage |
 |-------|----------|
-| Unit | Config parsing; access control matrix (guild/DM/roles); message split; rate limit; memory cap; backend stub error |
+| Unit | Config parsing; access control matrix (guild/DM/roles); message split; rate limit; memory cap; reply-endpoint auth; Grok Bot sendPrompt + callback / timeout |
 | Manual | Invite bot → set allowlists → mention in free vs gated channels / DM → verify OpenAI-compatible reply |
 | CI | `npm ci` → `npm test` → `npm run build` |
 
@@ -142,15 +152,15 @@ Point `SYSTEM_PROMPT_FILE` at an example, or replace with your Grok Bot’s own 
 ## Phase 1 non-goals
 
 - No Azure Functions hosting
-- No real Grok Bot Channels API client (stub only — North Star for Phase 2+)
+- No invented official Grok Bot Discord/Channels API (interim path is only `/api/sendPrompt` + bridge callback)
 - No multi-tenant SaaS
 - No use-case-specific product logic in the bridge (gaming, sales, etc. belong in the agent)
 
 ## Phase 2 notes
 
-See [PHASE2-GROK-BOT-BACKEND.md](./PHASE2-GROK-BOT-BACKEND.md) for the 2026-08-12 spike: no Discord Channels / inbound API yet; proposed contract + cutover checklist; stay on OpenAI-compatible until product catches up.
+See [PHASE2-GROK-BOT-BACKEND.md](./PHASE2-GROK-BOT-BACKEND.md) for the interim unofficial computer-gateway + `/internal/reply` callback (2026-08-14). Official Discord Channels inbound API is still the North Star and may replace this.
 
-- Implement `GrokBotBackend` only against a **documented** Discord/Channels-style inbound API; keep `AgentBackend` as the seam.
+- Keep `AgentBackend` as the seam. Do not expose the Grok Bot gateway port publicly.
 - Possible later: persistent memory (SQLite/Redis), richer tool registry, slash commands as *supplement* to gateway, observability (structured logs / metrics).
 
 ## Implementation order

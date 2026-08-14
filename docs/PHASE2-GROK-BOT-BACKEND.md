@@ -1,111 +1,117 @@
-# Phase 2 spike — real `GrokBotBackend` cutover
+# Phase 2 — `GrokBotBackend` (interim computer-gateway callback)
 
-Date: 2026-08-12  
-Status: **blocked on product** — no first-party Discord / Channels inbound API yet  
+Date: 2026-08-14  
+Status: **interim, unofficial** — no first-party Discord / Channels inbound API  
 Repo role: keep Discord UX + access control; persona/tools live in a Grok Bot agent
 
-## What we have today (Phase 1)
+## What we have today
 
 | Piece | State |
 |-------|--------|
-| Discord gateway (`discord.js`) | Live as HermesHelper |
-| `OpenAICompatibleBackend` | Production path (OpenRouter `x-ai/grok-4.6`) |
-| `GrokBotBackend` | Stub that throws (intentional) |
+| Discord gateway (`discord.js`) | Production |
+| `OpenAICompatibleBackend` | **Default production path** (`AGENT_BACKEND=openai`) |
+| `GrokBotBackend` | Implemented against the **undocumented-but-real** Grok Bot computer HTTP gateway + a bridge callback |
 | Access / rate limit / split / thread memory / channel context | Done |
-| Grok Bot agent `Discord Gaming Helper` | Exists with full gaming persona — **not wired to Discord** |
-| Grok Bot Channels UI | Per-agent pane supports Channels (e.g. GitHub on CoS); **no Discord connector in marketplace** |
+| `POST /internal/reply` | Authenticated in-process HTTP server on the bridge |
 
-## Finding (2026-08-12)
+Grok Bot has **no official Discord plugin**. The working community path is a private HTTP gateway on each Grok Bot computer (typically port **1340**, bearer token in that computer's `gateway.json`).
 
-1. Cursor / Grok Bot plugin catalog has **Slack** and other connectors; **no Discord** plugin/connector.
-2. Grok Bot launch materials describe bots, computers, Slack/Teams-style team chat — not a documented public HTTP “inbound message” API for Discord.
-3. Inventing a private API against the app would violate this repo’s Phase 1 rule (“do not invent the Grok Bot API”).
-4. Therefore **North Star cutover is not implementable yet**. Phase 1 OpenAI-compatible remains the correct production backend.
+Verified gateway methods (do not invent others):
 
-## Target architecture (when Channels Discord or inbound API lands)
+- `POST /api/listAgents`
+- `POST /api/sendPrompt` `{ agentId, prompt }`
+- `GET /health`
+
+`sendPrompt` **wakes the agent asynchronously**. It does **not** return the agent's reply. Replies normally go to Grok Bot chat via the agent's `SendMessage`. Discord only receives text the agent `POST`s back to this bridge.
+
+This design is **unofficial and may break** if the computer gateway changes.
+
+## Interim architecture
 
 ```mermaid
 flowchart LR
   D[Discord Gateway] --> B[discord-agent-bridge]
   B --> A[Access + rate limit]
   A --> G[GrokBotBackend]
-  G --> API[Grok Bot inbound / Channels]
-  API --> Agent[Discord Gaming Helper agent]
-  Agent --> API
-  API --> G
-  G --> B
+  G --> GW[POST /api/sendPrompt]
+  GW --> Agent[Grok Bot agent]
+  Agent --> CB[POST /internal/reply]
+  CB --> B
   B --> D
 ```
 
-Bridge keeps: Discord auth, allowlists, free-response, typing, split replies, conversation keys.  
-Agent owns: soul, tools, memory beyond ephemeral bridge buffer, routines.
+1. Discord message passes access control.
+2. `GrokBotBackend.generate()` creates a `correlationId`, registers a pending waiter, and `POST`s `sendPrompt` to `GROK_BOT_GATEWAY_URL`.
+3. The prompt includes a machine-readable `DISCORD_BRIDGE_REPLY` block plus the human Discord message and `AgentRequest` context.
+4. The Grok Bot agent `POST`s `{ correlationId, text }` to `BRIDGE_PUBLIC_URL/internal/reply` with `Authorization: Bearer <BRIDGE_REPLY_TOKEN>`.
+5. The bridge looks up the pending request, posts `text` to the matching Discord channel/thread (same ~1900 split as existing replies), then resolves `generate()`.
+6. If nothing arrives within `GROK_BOT_TIMEOUT_MS` (default 120s), `generate()` fails so Discord is not stuck typing.
 
-## Proposed `GrokBotBackend` contract (freeze this; implement when API exists)
+## Callback contract
 
-Env (sketch):
+`POST /internal/reply`
 
-| Variable | Purpose |
-|----------|---------|
-| `AGENT_BACKEND=grok-bot` | Select this backend |
-| `GROK_BOT_INBOUND_URL` | Documented HTTPS endpoint |
-| `GROK_BOT_API_KEY` / token | Auth for inbound |
-| `GROK_BOT_AGENT_ID` | Target agent (e.g. Discord Gaming Helper) |
-| `GROK_BOT_TIMEOUT_MS` | Request timeout |
+| Rule | Behavior |
+|------|----------|
+| Listen | `BRIDGE_HTTP_HOST` / `BRIDGE_HTTP_PORT` (defaults `0.0.0.0` / `8788`) |
+| Auth | `Authorization: Bearer <BRIDGE_REPLY_TOKEN>` — **fail closed** if unset or wrong → 401 |
+| Body | `{ "correlationId": string, "text": string }` (`error` optional) |
+| Unknown / expired id | 404 |
+| Missing fields | 400 |
+| Success | 200 `{ "ok": true }` |
 
-Request body (map from `AgentRequest`):
+This is **not** an unauthenticated public webhook. Do not log `BRIDGE_REPLY_TOKEN` or `GROK_BOT_TOKEN`.
 
-```json
-{
-  "agentId": "...",
-  "conversationKey": "thread:… or channel:…",
-  "authorDisplayName": "…",
-  "content": "…",
-  "channelName": "7dtd",
-  "threadName": "optional",
-  "channelTopic": "optional",
-  "guildName": "optional",
-  "metadata": { "platform": "discord", "source": "discord-agent-bridge" }
-}
-```
+`replyUrl` given to the agent is `BRIDGE_PUBLIC_URL + /internal/reply`. The Grok Bot computer is a **different machine** than the Docker host running the bridge, so `localhost` on the Grok Bot computer is not the bridge. Reachability options: Tailscale, SSH tunnel, or another private path.
 
-Response:
+**Never** expose the Grok Bot gateway port (`:1340`) to the internet. **Never** put `DISCORD_BOT_TOKEN` on the Grok Bot side.
 
-```json
-{ "text": "…" }
-```
+## Env (grok-bot mode)
 
-Errors: map HTTP/timeouts to Discord’s existing “Sorry — I hit an error…” path.  
-Do **not** put Discord bot token into Grok Bot; bot token stays on the bridge host.
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `AGENT_BACKEND=grok-bot` | yes (to select) | Select this backend |
+| `GROK_BOT_GATEWAY_URL` | yes | e.g. `http://host:1340` |
+| `GROK_BOT_TOKEN` | yes | Bearer from `gateway.json` |
+| `GROK_BOT_AGENT_ID` | yes | Target agent id (from env; do not hardcode a single id) |
+| `GROK_BOT_TIMEOUT_MS` | no | Default `120000` |
+| `BRIDGE_HTTP_HOST` | no | Default `0.0.0.0` |
+| `BRIDGE_HTTP_PORT` | no | Default `8788` (Compose publishes `8788:8788`) |
+| `BRIDGE_PUBLIC_URL` | yes | URL the Grok Bot computer uses to reach the bridge |
+| `BRIDGE_REPLY_TOKEN` | yes | Shared secret for the callback |
 
-## Cutover checklist (execute only after API is real)
+OpenAI-compatible remains the default. grok-bot fails closed if required vars are missing.
 
-1. Confirm official docs + auth model (OAuth vs API key vs channel connect card).
-2. Implement `src/agent/grokBot.ts` against the documented schema; add vitest with mocked fetch.
-3. Wire config validation for grok-bot env vars in `config.ts`.
-4. Smoke-test: `#ask-hermes` + `#7dtd` mention → reply from **Discord Gaming Helper** persona/tools (not local SOUL.md).
-5. Flip `.env` `AGENT_BACKEND=grok-bot`; keep OpenAI path as fallback.
-6. Optionally shrink or remove local `SYSTEM_PROMPT_FILE` dependency for that mode.
-7. Update README / PLAN Phase 2 from “stub” to “supported”.
+## Prompt block (what the agent must parse)
 
-## Interim options (optional; not North Star)
+The bridge embeds a JSON block between `---BEGIN DISCORD_BRIDGE_REPLY---` / `---END DISCORD_BRIDGE_REPLY---` containing:
 
-| Option | Pros | Cons |
-|--------|------|------|
-| **A. Stay on Phase 1** (recommended default) | Already works; low risk | Persona/tools not the full Grok Bot agent |
-| **B. Persona sync** — periodically copy Discord Gaming Helper instructions into `SYSTEM_PROMPT_FILE` | Closer voice; still OpenRouter | No agent tools/routines/memory; drift risk |
-| **C. Wait for official Discord Channel** — connect in agent info pane when it appears | True North Star; least invention | Unknown ETA |
-| **D. Local Cursor-CLI Discord bridges** (e.g. community Cursor↔Discord projects) | Different stack | Not Grok Bot; splits identity |
+- `correlationId`
+- `replyUrl`
+- `authorization` (`Bearer <BRIDGE_REPLY_TOKEN>`)
+- `httpMethod` / `contentType` / example `body`
 
-Recommendation: **A + C**. Keep HermesHelper on OpenRouter. Treat Discord Gaming Helper as the future target agent. Revisit when a Discord Channel connector or inbound API ships.
+Plus Discord context already on `AgentRequest`: `conversationKey`, `channelName`, `threadName`, `channelTopic`, `guildName`, `authorDisplayName`, `content`.
+
+Persona stays in the Grok Bot agent / `SYSTEM_PROMPT_FILE`. This repo is plumbing.
+
+## Errors
+
+Gateway HTTP failures and callback timeouts throw a short Discord-friendly error. The Discord message handler still uses the existing “Sorry — I hit an error generating a reply…” UX and logs the detail (without tokens).
+
+## Official North Star (still blocked)
+
+A documented Discord/Channels inbound API would replace this callback. Until then, do **not** invent a different official API — only `/api/sendPrompt` + this bridge callback.
+
+## Cutover / smoke
+
+1. Set grok-bot env vars; keep `AGENT_BACKEND=openai` as fallback.
+2. Confirm `BRIDGE_PUBLIC_URL` is reachable from the Grok Bot computer (`POST /internal/reply` with a wrong token should 401; do not test with real tokens in logs).
+3. Mention the bot in Discord → gateway `sendPrompt` → agent callback → Discord reply.
+4. If the unofficial gateway changes, park grok-bot mode and stay on OpenAI.
 
 ## Watch list
 
-- Grok Bot / Cursor Plugins marketplace: Discord
-- Per-agent Channels UI: Discord connect card
+- Official Discord Channel connector / inbound API
+- Computer gateway path or auth changes
 - Forum / docs: “Channels”, “inbound”, “messaging”
-- Any official webhook/HTTP agent invoke API
-
-## Decision needed from Nathan
-
-1. Park backend implementation until Discord Channels exists? (**default yes**)
-2. Want interim **persona sync** (Option B) so Discord voice matches Discord Gaming Helper sooner?

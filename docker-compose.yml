@@ -4,6 +4,10 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    ports:
+      # Authenticated Grok Bot callback (POST /internal/reply). Not the Grok Bot gateway.
+      - "8788:8788"
     volumes:
       # Optional: override the default soul without rebuilding
       - ./SOUL.md:/app/SOUL.md:ro
+      - ./examples:/app/examples:ro
