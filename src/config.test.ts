@@ -42,6 +42,11 @@ describe("loadConfig", () => {
     expect(cfg.systemPrompt).toMatch(/model `m`/);
     expect(cfg.temperature).toBe(0.7);
     expect(cfg.maxTokens).toBe(1024);
+    expect(cfg.bridgeHttpHost).toBe("0.0.0.0");
+    expect(cfg.bridgeHttpPort).toBe(8788);
+    expect(cfg.grokBotTimeoutMs).toBe(120_000);
+    expect(cfg.grokBotGatewayUrl).toBeNull();
+    expect(cfg.bridgeReplyToken).toBeNull();
   });
 
   it("fails closed without DISCORD_BOT_TOKEN", () => {
@@ -67,12 +72,24 @@ describe("loadConfig", () => {
     ).toThrow(/API_BASE_URL/);
   });
 
-  it("allows grok-bot backend without API settings", () => {
-    const soul = writeSoul();
-    const cfg = loadConfig({
+  function grokBotEnv(soul: string, overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+    return {
       DISCORD_BOT_TOKEN: "tok",
       SYSTEM_PROMPT_FILE: soul,
       AGENT_BACKEND: "grok-bot",
+      GROK_BOT_GATEWAY_URL: "http://127.0.0.1:1340",
+      GROK_BOT_TOKEN: "gw-token",
+      GROK_BOT_AGENT_ID: "agent-from-env",
+      BRIDGE_PUBLIC_URL: "http://bridge.example:8788",
+      BRIDGE_REPLY_TOKEN: "reply-token",
+      ...overrides,
+    };
+  }
+
+  it("allows grok-bot backend without OpenAI API settings when gateway vars are set", () => {
+    const soul = writeSoul();
+    const cfg = loadConfig({
+      ...grokBotEnv(soul),
       DISCORD_ALLOW_ALL_USERS: "true",
     });
     expect(cfg.agentBackend).toBe("grok-bot");
@@ -80,6 +97,47 @@ describe("loadConfig", () => {
     expect(cfg.allowDms).toBe(false);
     expect(cfg.dmOnly).toBe(false);
     expect(cfg.allowedGuilds).toEqual([]);
+    expect(cfg.grokBotGatewayUrl).toBe("http://127.0.0.1:1340");
+    expect(cfg.grokBotAgentId).toBe("agent-from-env");
+    expect(cfg.bridgePublicUrl).toBe("http://bridge.example:8788");
+    expect(cfg.bridgeHttpHost).toBe("0.0.0.0");
+    expect(cfg.bridgeHttpPort).toBe(8788);
+    expect(cfg.grokBotTimeoutMs).toBe(120_000);
+  });
+
+  it("fails closed when grok-bot required vars are missing", () => {
+    const soul = writeSoul();
+    expect(() =>
+      loadConfig({
+        DISCORD_BOT_TOKEN: "tok",
+        SYSTEM_PROMPT_FILE: soul,
+        AGENT_BACKEND: "grok-bot",
+      }),
+    ).toThrow(/GROK_BOT_GATEWAY_URL/);
+    expect(() => loadConfig(grokBotEnv(soul, { GROK_BOT_TOKEN: "" }))).toThrow(/GROK_BOT_TOKEN/);
+    expect(() => loadConfig(grokBotEnv(soul, { GROK_BOT_AGENT_ID: "" }))).toThrow(
+      /GROK_BOT_AGENT_ID/,
+    );
+    expect(() => loadConfig(grokBotEnv(soul, { BRIDGE_PUBLIC_URL: "" }))).toThrow(
+      /BRIDGE_PUBLIC_URL/,
+    );
+    expect(() => loadConfig(grokBotEnv(soul, { BRIDGE_REPLY_TOKEN: "" }))).toThrow(
+      /BRIDGE_REPLY_TOKEN/,
+    );
+  });
+
+  it("parses grok-bot timeout and bridge listen settings", () => {
+    const soul = writeSoul();
+    const cfg = loadConfig(
+      grokBotEnv(soul, {
+        GROK_BOT_TIMEOUT_MS: "90000",
+        BRIDGE_HTTP_HOST: "127.0.0.1",
+        BRIDGE_HTTP_PORT: "9090",
+      }),
+    );
+    expect(cfg.grokBotTimeoutMs).toBe(90_000);
+    expect(cfg.bridgeHttpHost).toBe("127.0.0.1");
+    expect(cfg.bridgeHttpPort).toBe(9090);
   });
 
   it("requires ALLOW_DMS when DM_ONLY is set", () => {
@@ -88,7 +146,7 @@ describe("loadConfig", () => {
       loadConfig({
         DISCORD_BOT_TOKEN: "tok",
         SYSTEM_PROMPT_FILE: soul,
-        AGENT_BACKEND: "grok-bot",
+        ...grokBotEnv(soul),
         DISCORD_DM_ONLY: "true",
         DISCORD_ALLOW_DMS: "false",
       }),
@@ -100,7 +158,7 @@ describe("loadConfig", () => {
     const cfg = loadConfig({
       DISCORD_BOT_TOKEN: "tok",
       SYSTEM_PROMPT_FILE: soul,
-      AGENT_BACKEND: "grok-bot",
+      ...grokBotEnv(soul),
       DISCORD_ALLOW_ALL_USERS: "true",
       DISCORD_ALLOWED_GUILDS: "g1, g2",
       DISCORD_ALLOW_DMS: "true",

@@ -13,10 +13,17 @@ export interface AgentRequest {
   channelTopic?: string | null;
   /** Guild name when available. */
   guildName?: string;
+  /**
+   * Optional delivery hook used by GrokBotBackend so POST /internal/reply
+   * can send the Discord message (split/~1900) before generate() resolves.
+   */
+  deliverReply?: (text: string) => Promise<void>;
 }
 
 export interface AgentResponse {
   text: string;
+  /** True when the backend already posted to Discord (skip a second send). */
+  delivered?: boolean;
 }
 
 export interface AgentBackend {

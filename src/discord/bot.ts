@@ -169,9 +169,12 @@ async function handleMessage(
         threadName: ctx.threadName,
         channelTopic: ctx.channelTopic,
         guildName: ctx.guildName,
+        deliverReply: (text) => sendSplitReply(message, text),
       }),
     );
-    await sendSplitReply(message, result.text);
+    if (!result.delivered) {
+      await sendSplitReply(message, result.text);
+    }
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     console.error("[bridge] agent error:", detail);
