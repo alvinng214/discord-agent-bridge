@@ -61,12 +61,14 @@ Optional personas (copy or point `SYSTEM_PROMPT_FILE` at them):
 - [`examples/team-assistant/SOUL.md`](examples/team-assistant/SOUL.md) — small-team Discord assistant
 - [`examples/gaming-helper/SOUL.md`](examples/gaming-helper/SOUL.md) — domain example only
 
-Docker:
+Docker (OpenAI-compatible path, or a **split-machine** grok-bot bridge — not the colocated localhost topology):
 
 ```bash
 cp .env.example .env   # fill in secrets
 docker compose up --build
 ```
+
+`docker compose` + `127.0.0.1` does **not** work for grok-bot on the Grok Bot computer. Inside the container, `127.0.0.1:1340` is the container, not the host gateway, and `BRIDGE_HTTP_HOST=127.0.0.1` makes Compose's published callback port unreachable. See [Run the bridge on the Grok Bot computer](#run-the-bridge-on-the-grok-bot-computer).
 
 ## Environment variables
 
@@ -86,13 +88,13 @@ docker compose up --build
 | `API_BASE_URL` | if openai | e.g. `https://api.x.ai/v1` or `https://api.openai.com/v1` |
 | `API_KEY` | if openai | Provider API key |
 | `MODEL` | if openai | Model id |
-| `GROK_BOT_GATEWAY_URL` | if grok-bot | Private computer gateway base. Colocated: `http://127.0.0.1:1340`. Split-machine: a private host URL. |
+| `GROK_BOT_GATEWAY_URL` | if grok-bot | Private computer gateway base. Colocated host process: `http://127.0.0.1:1340`. Split-machine: a private host URL. |
 | `GROK_BOT_TOKEN` | if grok-bot | Bearer token from that computer's `gateway.json` (password) |
 | `GROK_BOT_AGENT_ID` | if grok-bot | Target agent id from `POST /api/listAgents` (from env, not hardcoded) |
 | `GROK_BOT_TIMEOUT_MS` | no | Default `120000` — how long `generate()` waits for `/internal/reply` |
-| `BRIDGE_HTTP_HOST` | no | Default `0.0.0.0`. Colocated: bind `127.0.0.1` so the callback is localhost-only. |
+| `BRIDGE_HTTP_HOST` | no | Default `0.0.0.0`. Colocated host process: bind `127.0.0.1` so the callback is localhost-only. |
 | `BRIDGE_HTTP_PORT` | no | Default `8788`. Compose maps host and container to this port (`${BRIDGE_HTTP_PORT:-8788}:${BRIDGE_HTTP_PORT:-8788}`) |
-| `BRIDGE_PUBLIC_URL` | if grok-bot | URL the **Grok Bot computer** uses to reach this bridge. Colocated: `http://127.0.0.1:8788`. When the bridge runs on a different machine, that machine's `localhost` is not the bridge. |
+| `BRIDGE_PUBLIC_URL` | if grok-bot | URL the **Grok Bot computer** uses to reach this bridge. Colocated host process: `http://127.0.0.1:8788`. When the bridge runs on a different machine, that machine's `localhost` is not the bridge. |
 | `BRIDGE_REPLY_TOKEN` | if grok-bot | Shared secret for `Authorization: Bearer` on `POST /internal/reply` (password) |
 | `SYSTEM_PROMPT_FILE` | no | Default `SOUL.md` (neutral); swap for your agent persona |
 | `TEMPERATURE` | no | Default `0.7` |
@@ -120,7 +122,7 @@ There is no official Discord plugin. The working community path is:
 
 `BRIDGE_PUBLIC_URL` must be reachable **from the Grok Bot computer**.
 
-- **Colocated (works today):** run this Node process on the Grok Bot computer and use `http://127.0.0.1:8788`. See [Run the bridge on the Grok Bot computer](#run-the-bridge-on-the-grok-bot-computer).
+- **Colocated host process (works today):** `npm start` on the Grok Bot computer (not Docker) and use `http://127.0.0.1:8788`. See [Run the bridge on the Grok Bot computer](#run-the-bridge-on-the-grok-bot-computer).
 - **Split-machine:** when the bridge runs on a different machine (for example Docker on a laptop), `localhost` on the Grok Bot computer is not the bridge. Use Tailscale, an SSH tunnel, or another private path.
 
 **Do not** expose the Grok Bot gateway port (`:1340`) or the callback port (`:8788`) to the internet. Keep `DISCORD_BOT_TOKEN` in the bridge's local `.env` only — never in the Grok Bot agent, `gateway.json`, or git. Treat `GROK_BOT_TOKEN` and `BRIDGE_REPLY_TOKEN` like passwords; never commit or log them.
@@ -129,11 +131,13 @@ This callback is unofficial and may break. See [docs/PHASE2-GROK-BOT-BACKEND.md]
 
 ## Run the bridge on the Grok Bot computer
 
-The setup that works today without Tailscale or a tunnel: run **discord-agent-bridge on the same computer** as the Grok Bot agent so both the gateway (`:1340`) and the callback (`:8788`) stay on localhost.
+The setup that works today without Tailscale or a tunnel is a **host-process-only** topology: run `npm start` **on the Grok Bot computer itself** (same network namespace as the gateway). Both the gateway (`:1340`) and the callback (`:8788`) stay on that host's localhost.
+
+This is **not** `docker compose` on that computer. Inside a container, `127.0.0.1:1340` is the container, not the host gateway, and `BRIDGE_HTTP_HOST=127.0.0.1` binds the callback to the container loopback so Compose's published port cannot reach it.
 
 **Prerequisites**
 
-- Node.js **20+** on the Grok Bot computer
+- Node.js **20+** on the Grok Bot computer (host process, not a container)
 - Discord bot token in a local `.env` only (never commit it)
 - Grok Bot computer gateway listening on `127.0.0.1:1340`
 
@@ -166,13 +170,17 @@ npm run build
 npm start
 ```
 
-A Grok Bot computer **Update** keeps files on disk but stops running processes. A simple restart wrapper (or any supervisor) is useful so the bridge comes back after an update, for example:
+Optional crash-only wrapper (restarts `npm start` if the Node process exits while this shell stays alive):
 
 ```bash
 while true; do npm start; echo "bridge exited; restarting in 5s"; sleep 5; done
 ```
 
-In this mode, **never** expose `:1340` or `:8788` beyond localhost. Full topology notes (colocated vs split-machine + Tailscale/tunnel) are in [docs/PHASE2-GROK-BOT-BACKEND.md](docs/PHASE2-GROK-BOT-BACKEND.md).
+A Grok Bot computer **Update** keeps files on disk but stops running processes, including this shell. The loop does **not** survive an Update. After an Update, something **outside** that shell must start the bridge again: a manual `npm start`, a Grok Bot routine that checks and relaunches, or another supervisor that is re-armed after the update.
+
+Docker on the same Grok Bot host is a **different** setup, not this topology. The container must reach the host gateway (for example `host.docker.internal` / `extra_hosts`), and you must **not** bind the callback to the container's `127.0.0.1` if you need Compose's published port. Prefer the host-process path above.
+
+In this host-process mode, **never** expose `:1340` or `:8788` beyond localhost. Full topology notes (colocated host process vs split-machine + Tailscale/tunnel) are in [docs/PHASE2-GROK-BOT-BACKEND.md](docs/PHASE2-GROK-BOT-BACKEND.md).
 
 ## Scripts
 

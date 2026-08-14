@@ -80,13 +80,13 @@ flowchart LR
 | `DISCORD_REQUIRE_MENTION` | no | Default `true` outside free-response channels (DMs never require mention) |
 | `DISCORD_HOME_CHANNEL` | no | Optional home channel ID (logged / future routing) |
 | `AGENT_BACKEND` | no | `openai` (default) \| `grok-bot` (unofficial gateway + callback) |
-| `GROK_BOT_GATEWAY_URL` | if grok-bot | Private computer gateway base (do not expose `:1340` publicly). Colocated: `http://127.0.0.1:1340` |
+| `GROK_BOT_GATEWAY_URL` | if grok-bot | Private computer gateway base (do not expose `:1340` publicly). Colocated host process: `http://127.0.0.1:1340` |
 | `GROK_BOT_TOKEN` | if grok-bot | Bearer from that computer's `gateway.json` |
 | `GROK_BOT_AGENT_ID` | if grok-bot | Target agent id from `POST /api/listAgents` |
 | `GROK_BOT_TIMEOUT_MS` | no | Default `120000` |
-| `BRIDGE_HTTP_HOST` | no | Default `0.0.0.0`. Colocated: `127.0.0.1` |
+| `BRIDGE_HTTP_HOST` | no | Default `0.0.0.0`. Colocated host process: `127.0.0.1` |
 | `BRIDGE_HTTP_PORT` | no | Default `8788` |
-| `BRIDGE_PUBLIC_URL` | if grok-bot | Reachable from the Grok Bot computer. Colocated: `http://127.0.0.1:8788`. When the bridge runs on a different machine, that machine's `localhost` is not the bridge. |
+| `BRIDGE_PUBLIC_URL` | if grok-bot | Reachable from the Grok Bot computer. Colocated host process: `http://127.0.0.1:8788`. When the bridge runs on a different machine, that machine's `localhost` is not the bridge. |
 | `BRIDGE_REPLY_TOKEN` | if grok-bot | Bearer for `POST /internal/reply` |
 | `API_BASE_URL` | if openai | e.g. `https://api.x.ai/v1` |
 | `API_KEY` | if openai | Provider API key |
