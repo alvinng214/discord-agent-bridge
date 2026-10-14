@@ -35,13 +35,53 @@ describe("evaluateAccess", () => {
     expect(evaluateAccess(guildInput({ isSelf: true }), baseConfig).allowed).toBe(false);
   });
 
-  it("allows a listed bot user", () => {
+  it("allows a listed bot that is not on the user allowlist", () => {
     expect(
-      evaluateAccess(guildInput({ isBot: true, authorId: "bot-ok" }), {
-        ...baseConfig,
-        allowedUsers: ["u1", "bot-ok"],
-      }),
+      evaluateAccess(
+        guildInput({
+          isBot: true,
+          authorId: "bot-ok",
+          channelId: "free",
+          botMentioned: false,
+        }),
+        baseConfig,
+      ),
     ).toEqual({ allowed: true });
+  });
+
+  it("denies an allowed bot DM that is not on the user allowlist", () => {
+    expect(
+      evaluateAccess(
+        guildInput({
+          isBot: true,
+          authorId: "bot-ok",
+          isDm: true,
+          guildId: null,
+          botMentioned: false,
+        }),
+        { ...baseConfig, allowDms: true },
+      ),
+    ).toEqual({ allowed: false, reason: "user_not_allowed" });
+  });
+
+  it("requires a mention from an allowed bot outside free-response channels", () => {
+    expect(
+      evaluateAccess(
+        guildInput({
+          isBot: true,
+          authorId: "bot-ok",
+          channelId: "c",
+          botMentioned: false,
+        }),
+        baseConfig,
+      ),
+    ).toEqual({ allowed: false, reason: "mention_required" });
+  });
+
+  it("still applies the user allowlist to a human whose id is listed as a bot", () => {
+    expect(
+      evaluateAccess(guildInput({ isBot: false, authorId: "bot-ok" }), baseConfig),
+    ).toEqual({ allowed: false, reason: "user_not_allowed" });
   });
 
   it("allows listed users when mentioned", () => {
