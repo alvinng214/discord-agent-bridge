@@ -103,16 +103,12 @@ async function dispatch(client: Client, message: Message): Promise<void> {
   );
 }
 
-describe("confirmation-echo filter", () => {
+describe("allowed bot delivery", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("delivers an allowed bot @-mention that says Confirmed", async () => {
-    const logs: string[] = [];
-    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
-      logs.push(args.map(String).join(" "));
-    });
+  it("delivers an allowed bot message containing Confirmed with no mention", async () => {
     const generate = vi.fn(async () => ({ text: "ack", delivered: true }));
     const backend: AgentBackend = { name: "test", generate };
     const client = fakeClient();
@@ -123,8 +119,8 @@ describe("confirmation-echo filter", () => {
       botMessage({
         id: "m-round8",
         username: "GPT",
-        mentioned: true,
-        content: `<@${SELF_ID}> Confirmed: all three mains are clean`,
+        mentioned: false,
+        content: "Confirmed: all three mains are clean",
       }),
     );
 
@@ -134,32 +130,30 @@ describe("confirmation-echo filter", () => {
         content: expect.stringContaining("Confirmed: all three mains"),
       }),
     );
-    expect(logs.some((line) => line.includes("confirmation-echo filter dropped"))).toBe(false);
   });
 
-  it("drops an unmentioned bot confirmed echo and logs it", async () => {
-    const logs: string[] = [];
-    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
-      logs.push(args.map(String).join(" "));
-    });
+  it("delivers an allowed bot after many consecutive bot turns", async () => {
     const generate = vi.fn(async () => ({ text: "ack", delivered: true }));
     const backend: AgentBackend = { name: "test", generate };
     const client = fakeClient();
     attachMessageHandler(client, bridgeConfig(), backend);
 
-    await dispatch(
-      client,
-      botMessage({
-        id: "m-echo",
-        username: "GPT",
-        mentioned: false,
-        content: "confirmed, stopping",
-      }),
-    );
+    const turns = 5;
+    for (let n = 1; n <= turns; n++) {
+      await dispatch(
+        client,
+        botMessage({
+          id: `m-turn-${n}`,
+          username: "GPT",
+          mentioned: false,
+          content: `bot turn ${n}`,
+        }),
+      );
+    }
 
-    expect(generate).not.toHaveBeenCalled();
-    expect(logs).toContain(
-      "[bridge] confirmation-echo filter dropped message=m-echo from=GPT",
+    expect(generate).toHaveBeenCalledTimes(turns);
+    expect(generate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ content: `bot turn ${turns}` }),
     );
   });
 });
