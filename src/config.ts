@@ -26,6 +26,13 @@ export interface Config {
   autofetchFetchTimeoutMs: number;
   /** Total attempts per autofetch REST call, including the first try. */
   autofetchFetchAttempts: number;
+  /**
+   * When false (default), a channel with no saved cursor is seeded to the newest
+   * message and nothing is delivered. Set true to replay the lookback once.
+   */
+  autofetchBackfill: boolean;
+  /** Log clean autofetch heartbeats every N ticks (always on change, skip, or error). */
+  heartbeatEvery: number;
   requireMention: boolean;
   /** Include the message being replied to in the agent prompt. Off unless DISCORD_INCLUDE_REPLY_CONTEXT=true. */
   includeReplyContext: boolean;
@@ -226,6 +233,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       5,
       "DISCORD_AUTOFETCH_FETCH_ATTEMPTS",
     ),
+    autofetchBackfill: parseBool(env.DISCORD_AUTOFETCH_BACKFILL, false),
+    heartbeatEvery: parseBoundedInt(env.DISCORD_HEARTBEAT_EVERY, 20, 1, 10_000, "DISCORD_HEARTBEAT_EVERY"),
     requireMention: parseBool(env.DISCORD_REQUIRE_MENTION, true),
     includeReplyContext: parseBool(env.DISCORD_INCLUDE_REPLY_CONTEXT, false),
     allowedBotUsers: parseCsvIds(env.DISCORD_ALLOWED_BOTS),

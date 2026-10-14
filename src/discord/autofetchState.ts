@@ -18,8 +18,9 @@ export function autofetchStatePath(stateDir: string, botUserId: string): string 
 
 /**
  * Durable last-processed Discord snowflake per channel.
- * Writes are atomic (temp file + rename). A corrupt file is ignored so the
- * bridge still boots; selfFloor remains the fallback until a cursor is saved.
+ * Writes are atomic (temp file + rename). A missing file and a corrupt file
+ * both start with no cursors. The poller seeds those channels to the newest
+ * id and does not replay; a corrupt file is never treated as a backfill.
  */
 export class AutofetchStateStore {
   private channels: Record<string, string> = {};

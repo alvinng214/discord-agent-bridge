@@ -43,6 +43,8 @@ describe("loadConfig", () => {
     expect(cfg.autofetchLookbackMs).toBe(2 * 60 * 60 * 1000);
     expect(cfg.autofetchFetchTimeoutMs).toBe(10_000);
     expect(cfg.autofetchFetchAttempts).toBe(3);
+    expect(cfg.autofetchBackfill).toBe(false);
+    expect(cfg.heartbeatEvery).toBe(20);
     expect(cfg.maxBotTurns).toBe(2);
     expect(cfg.includeReplyContext).toBe(false);
     expect(cfg.autofetchStateDir).toMatch(/\/run$/);
@@ -190,6 +192,8 @@ describe("loadConfig", () => {
         DISCORD_AUTOFETCH_STATE_DIR: "/tmp/bridge-state",
         DISCORD_AUTOFETCH_FETCH_TIMEOUT_MS: "8000",
         DISCORD_AUTOFETCH_FETCH_ATTEMPTS: "2",
+        DISCORD_AUTOFETCH_BACKFILL: "true",
+        DISCORD_HEARTBEAT_EVERY: "5",
         DISCORD_ALLOWED_BOTS: "bot1, bot2",
         DISCORD_BLOCKED_CHANNELS: "blocked",
         DISCORD_MAX_BOT_TURNS: "4",
@@ -202,6 +206,8 @@ describe("loadConfig", () => {
     expect(cfg.autofetchStateDir).toBe("/tmp/bridge-state");
     expect(cfg.autofetchFetchTimeoutMs).toBe(8_000);
     expect(cfg.autofetchFetchAttempts).toBe(2);
+    expect(cfg.autofetchBackfill).toBe(true);
+    expect(cfg.heartbeatEvery).toBe(5);
     expect(cfg.allowedBotUsers).toEqual(["bot1", "bot2"]);
     expect(cfg.blockedChannels).toEqual(["blocked"]);
     expect(cfg.maxBotTurns).toBe(4);

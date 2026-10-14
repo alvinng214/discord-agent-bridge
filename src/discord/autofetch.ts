@@ -97,7 +97,48 @@ export function retryDelayMs(failedAttempt: number): number {
   return Math.min(8_000, 500 * 3 ** (n - 1));
 }
 
-export async function withTimeout<T>(work: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+/** Do not sleep longer than this on a single 429, even if retry_after is huge. */
+export const RATE_LIMIT_WAIT_CAP_MS = 60_000;
+
+/**
+ * Discord HTTP bodies use `retry_after` in seconds. `@discordjs/rest` RateLimitError
+ * uses `retryAfter` in milliseconds. Prefer the millisecond field when both are set.
+ */
+export function rateLimitDelayMs(err: unknown): number | undefined {
+  if (!err || typeof err !== "object") return undefined;
+  const record = err as {
+    retryAfter?: unknown;
+    retry_after?: unknown;
+    rawError?: { retry_after?: unknown };
+    data?: { retry_after?: unknown };
+  };
+  if (typeof record.retryAfter === "number" && Number.isFinite(record.retryAfter) && record.retryAfter > 0) {
+    return Math.min(RATE_LIMIT_WAIT_CAP_MS, Math.ceil(record.retryAfter));
+  }
+  const seconds = [record.retry_after, record.rawError?.retry_after, record.data?.retry_after].find(
+    (value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0,
+  );
+  if (seconds === undefined) return undefined;
+  return Math.min(RATE_LIMIT_WAIT_CAP_MS, Math.ceil(seconds * 1000));
+}
+
+/**
+ * Bound how long we wait for `work`. `abort` runs if the timer wins.
+ *
+ * discord.js 14.16 does not forward an AbortSignal on the calls autofetch makes:
+ * `ChannelManager.fetch` only accepts `{ allowUnknownGuild, cache, force }` and
+ * `MessageManager._fetchMany` only forwards query options. Both call `rest.get`
+ * without a signal, even though `@discordjs/rest` RequestData supports one.
+ * Passing an AbortController here would not cancel those sockets, so the Discord
+ * adapter does not pass `abort`. The race still unblocks the poll; the underlying
+ * request runs until Discord or undici finishes.
+ */
+export async function withTimeout<T>(
+  work: Promise<T>,
+  timeoutMs: number,
+  label: string,
+  abort?: () => void,
+): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   // If the timeout wins the race, a later rejection of `work` must not surface as unhandled.
   const pending = work.then(
@@ -111,7 +152,14 @@ export async function withTimeout<T>(work: Promise<T>, timeoutMs: number, label:
     return await Promise.race([
       pending,
       new Promise<T>((_, reject) => {
-        timer = setTimeout(() => reject(new AutofetchTimeoutError(label, timeoutMs)), timeoutMs);
+        timer = setTimeout(() => {
+          try {
+            abort?.();
+          } catch {
+            // Abort is best-effort; the timeout still rejects the wait.
+          }
+          reject(new AutofetchTimeoutError(label, timeoutMs));
+        }, timeoutMs);
       }),
     ]);
   } finally {
@@ -127,11 +175,14 @@ export async function retryTransient<T>(opts: {
   sleep: (ms: number) => Promise<void>;
   shouldAbort?: () => boolean;
   onRetry?: (info: { attempt: number; delayMs: number; message: string }) => void;
+  /** Fired before each fetch attempt and before each backoff sleep. */
+  onWait?: (kind: "fetch" | "sleep", waitMs: number) => void;
 }): Promise<T> {
   const attempts = Math.max(1, Math.floor(opts.attempts));
   let last: unknown;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     if (opts.shouldAbort?.()) throw new AutofetchAbortedError();
+    opts.onWait?.("fetch", opts.timeoutMs);
     try {
       return await withTimeout(opts.run(), opts.timeoutMs, opts.label);
     } catch (err) {
@@ -139,9 +190,10 @@ export async function retryTransient<T>(opts: {
       if (err instanceof AutofetchAbortedError) throw err;
       if (opts.shouldAbort?.()) throw new AutofetchAbortedError();
       if (attempt >= attempts || !isTransientDiscordError(err)) throw err;
-      const delayMs = retryDelayMs(attempt);
+      const delayMs = rateLimitDelayMs(err) ?? retryDelayMs(attempt);
       const message = err instanceof Error ? err.message : String(err);
       opts.onRetry?.({ attempt, delayMs, message });
+      opts.onWait?.("sleep", delayMs);
       await opts.sleep(delayMs);
       if (opts.shouldAbort?.()) throw new AutofetchAbortedError();
     }
@@ -149,13 +201,26 @@ export async function retryTransient<T>(opts: {
   throw last instanceof Error ? last : new Error(String(last));
 }
 
-export function decideWatchdog(
-  idleMs: number,
-  intervalMs: number,
-  resets: number,
-): "ok" | "reset" | "exit" {
-  if (idleMs < intervalMs * 3) return "ok";
-  if (resets <= 0) return "reset";
+/**
+ * Extra time past an in-flight fetch timeout or retry sleep before that wait
+ * counts as a hang. Transient errors that settle inside this window are progress.
+ */
+export const WATCHDOG_SLACK_MS = 1_000;
+
+/**
+ * Exit only when a fetch or retry sleep is in flight and has not reported
+ * progress within its own budget. A finished timeout, DNS error, or 429 wait
+ * is progress, so a multi-channel outage cannot trip this by simply being slow.
+ */
+export function decideWatchdog(input: {
+  inFlight: boolean;
+  idleMs: number;
+  graceMs: number;
+  resets: number;
+}): "ok" | "reset" | "exit" {
+  if (!input.inFlight) return "ok";
+  if (input.idleMs <= input.graceMs) return "ok";
+  if (input.resets <= 0) return "reset";
   return "exit";
 }
 
@@ -173,61 +238,61 @@ export interface AutofetchSelection<T> {
   /** Set when the cursor should move. Undefined when nothing new was considered. */
   nextCursor?: string;
   newestId?: string;
+  /**
+   * The fetched page is full and its oldest id is still newer than the cursor,
+   * so messages between the cursor and that page were not returned.
+   */
+  gap: boolean;
 }
 
 /**
  * Choose which fetched messages to hand to the agent.
- * A saved cursor wins over selfFloor so a restart still delivers in-lookback
- * humans and allowed bots that arrived after the last processed id, even when
- * our own later post is newer. selfFloor is only the first-boot fallback, and
- * even then in-lookback allowed-bot messages are delivered.
+ * With no saved cursor, the default (`seedOnly`) pins the cursor to the newest
+ * id and delivers nothing. Opt-in backfill (`seedOnly: false` and no cursor)
+ * hands off in-lookback messages except our own posts. A saved cursor delivers
+ * anything newer than that id inside the lookback, including messages that sit
+ * before a newer post of our own.
  */
 export function selectAutofetchMessages<T>(input: {
   messages: PolledMessage<T>[];
   selfUserId: string;
   lastProcessedId?: string;
-  useSelfFloor: boolean;
-  allowedBotIds: ReadonlySet<string>;
+  seedOnly: boolean;
   now: number;
   lookbackMs: number;
+  batchLimit?: number;
 }): AutofetchSelection<T> {
   const ordered = [...input.messages].sort((a, b) => {
     if (a.id === b.id) return 0;
     return snowflakeGreater(a.id, b.id) ? 1 : -1;
   });
-  let selfFloor: string | undefined;
-  if (input.useSelfFloor) {
-    for (const message of ordered) {
-      if (message.authorId === input.selfUserId) selfFloor = message.id;
-    }
+  const newestId = ordered.length > 0 ? ordered[ordered.length - 1]!.id : undefined;
+  const oldestId = ordered.length > 0 ? ordered[0]!.id : undefined;
+  const batchLimit = input.batchLimit ?? AUTOFETCH_BATCH_LIMIT;
+  const gap = Boolean(
+    input.lastProcessedId &&
+      ordered.length >= batchLimit &&
+      oldestId &&
+      snowflakeGreater(oldestId, input.lastProcessedId),
+  );
+
+  if (!input.lastProcessedId && input.seedOnly) {
+    return { deliver: [], nextCursor: newestId, newestId, gap: false };
   }
 
   const deliver: PolledMessage<T>[] = [];
   let cursor = input.lastProcessedId;
+  const backfill = !input.lastProcessedId;
   for (const message of ordered) {
     if (cursor && !snowflakeGreater(message.id, cursor)) continue;
     const fresh = input.now - message.createdTimestamp <= input.lookbackMs;
-    if (selfFloor && !snowflakeGreater(message.id, selfFloor)) {
-      const recoverUnreadBot =
-        fresh &&
-        message.authorId !== input.selfUserId &&
-        input.allowedBotIds.has(message.authorId);
-      if (!recoverUnreadBot) {
-        cursor = message.id;
-        continue;
-      }
-    }
-    if (!fresh) {
-      cursor = message.id;
-      continue;
-    }
-    deliver.push(message);
+    const skipOwnPost = backfill && message.authorId === input.selfUserId;
+    if (fresh && !skipOwnPost) deliver.push(message);
     cursor = message.id;
   }
 
-  const newestId = ordered.length > 0 ? ordered[ordered.length - 1]!.id : undefined;
   const nextCursor = cursor !== undefined && cursor !== input.lastProcessedId ? cursor : undefined;
-  return { deliver, nextCursor, newestId };
+  return { deliver, nextCursor, newestId, gap };
 }
 
 export interface AutofetchLoopOptions<TChannel, TPayload> {
@@ -236,7 +301,10 @@ export interface AutofetchLoopOptions<TChannel, TPayload> {
   lookbackMs: number;
   fetchTimeoutMs: number;
   fetchAttempts: number;
-  allowedBotIds: readonly string[];
+  /** When false (default), a channel with no cursor is seeded and not replayed. */
+  backfill?: boolean;
+  /** Log clean ok heartbeats on tick 1, every N ticks, and whenever the outcome changes. */
+  heartbeatEvery?: number;
   state: AutofetchStateStore;
   statePath: string;
   userId: () => string | null;
@@ -262,22 +330,33 @@ function defaultSleep(ms: number): Promise<void> {
 }
 
 /**
- * One autofetch poller. Each tick logs a heartbeat (`ok` or `skipped: <reason>`).
- * Fetches have their own timeout and a bounded retry on transient Discord errors.
- * If no tick completes within 3× the interval, in-flight state is reset once;
- * if the next window also fails to finish, the process exits nonzero.
+ * One autofetch poller.
+ * Clean heartbeats log on the first tick, every `heartbeatEvery` ticks, and
+ * whenever the outcome changes. Skipped ticks and ticks with errors always log.
+ * Delivery is at-most-once: the cursor advances when a message is handed to the
+ * handler, not when the agent finishes.
+ * The watchdog exits only when an in-flight fetch or retry sleep outlives its
+ * own budget. Transient Discord errors are progress and never exit the process.
  */
 export class AutofetchLoop<TChannel, TPayload> {
   private running = false;
   private runningSince = 0;
   private generation = 0;
   private tickNo = 0;
-  private lastTickDoneAt: number;
+  private inFlight = false;
+  private lastProgressAt: number;
+  private graceMs = 0;
   private watchdogResets = 0;
   private prepared = false;
+  /** Corrupt state: seed every channel and do not backfill, even if backfill is on. */
+  private forceSeed = false;
+  private lastHeartbeatSignature: string | undefined;
+  private readonly seededLogged = new Set<string>();
+  private readonly gapLogged = new Set<string>();
   private timer: ReturnType<typeof setInterval> | undefined;
   private watch: ReturnType<typeof setInterval> | undefined;
-  private readonly allowedBotIds: ReadonlySet<string>;
+  private readonly backfill: boolean;
+  private readonly heartbeatEvery: number;
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly exit: (code: number) => void;
@@ -285,14 +364,15 @@ export class AutofetchLoop<TChannel, TPayload> {
   private readonly error: (line: string) => void;
 
   constructor(private readonly opts: AutofetchLoopOptions<TChannel, TPayload>) {
-    this.allowedBotIds = new Set(opts.allowedBotIds);
+    this.backfill = opts.backfill ?? false;
+    this.heartbeatEvery = Math.max(1, Math.floor(opts.heartbeatEvery ?? 20));
     this.now = opts.now ?? (() => Date.now());
     this.sleep = opts.sleep ?? defaultSleep;
     this.exit = opts.exit ?? ((code) => process.exit(code));
     this.log = opts.log ?? ((line) => console.log(line));
     this.error = opts.error ?? ((line) => console.error(line));
-    this.lastTickDoneAt = this.now();
-    this.runningSince = this.lastTickDoneAt;
+    this.lastProgressAt = this.now();
+    this.runningSince = this.lastProgressAt;
   }
 
   start(): void {
@@ -307,7 +387,7 @@ export class AutofetchLoop<TChannel, TPayload> {
     void this.tick().catch((err) => this.error(`[bridge] tick crashed ${errorText(err)}`));
     const suffix = this.opts.bannerSuffix ? ` ${this.opts.bannerSuffix}` : "";
     this.log(
-      `[bridge] autofetch every ${every}ms lookback=${this.opts.lookbackMs}ms timeout=${this.opts.fetchTimeoutMs}ms attempts=${this.opts.fetchAttempts} watchdog=${every * 3}ms state=${this.opts.statePath} channels=${this.opts.channelIds.join(",")}${suffix}`,
+      `[bridge] autofetch every ${every}ms lookback=${this.opts.lookbackMs}ms timeout=${this.opts.fetchTimeoutMs}ms attempts=${this.opts.fetchAttempts} backfill=${this.backfill} heartbeatEvery=${this.heartbeatEvery} watchdog=hang-only state=${this.opts.statePath} channels=${this.opts.channelIds.join(",")}${suffix}`,
     );
   }
 
@@ -322,21 +402,28 @@ export class AutofetchLoop<TChannel, TPayload> {
 
   /** Returns the reset tick when one was started, so tests can await it. */
   checkWatchdog(): Promise<void> | undefined {
-    const idle = this.now() - this.lastTickDoneAt;
-    const decision = decideWatchdog(idle, this.opts.intervalMs, this.watchdogResets);
+    const idle = this.now() - this.lastProgressAt;
+    const decision = decideWatchdog({
+      inFlight: this.inFlight && this.running,
+      idleMs: idle,
+      graceMs: this.graceMs,
+      resets: this.watchdogResets,
+    });
     if (decision === "ok") return undefined;
     if (decision === "reset") {
       this.watchdogResets = 1;
       this.generation += 1;
       this.running = false;
-      this.lastTickDoneAt = this.now();
-      this.error(`[bridge] watchdog: no tick completed for ${idle}ms; reset in-flight state`);
+      this.inFlight = false;
+      this.error(
+        `[bridge] watchdog: in-flight fetch made no progress for ${idle}ms; reset in-flight state`,
+      );
       return this.tick().catch((err) => {
         this.error(`[bridge] tick crashed ${errorText(err)}`);
       });
     }
     this.error(
-      `[bridge] watchdog: still stuck ${idle}ms after reset; exiting for supervisor respawn`,
+      `[bridge] watchdog: still hung ${idle}ms after reset; exiting for supervisor respawn`,
     );
     this.exit(AUTOFETCH_EXIT_CODE);
     return undefined;
@@ -354,7 +441,6 @@ export class AutofetchLoop<TChannel, TPayload> {
     const userId = this.opts.userId();
     if (!userId) {
       this.log(`[bridge] heartbeat tick=${n} skipped: discord client not ready`);
-      this.lastTickDoneAt = this.now();
       return;
     }
 
@@ -383,21 +469,32 @@ export class AutofetchLoop<TChannel, TPayload> {
           if (this.generation !== myGen) return;
 
           const last = this.opts.state.get(id);
-          const useSelfFloor = !this.opts.state.has(id);
-          if (useSelfFloor && messages.length > 0) {
-            this.log(
-              `[bridge] autofetch channel=${id} catch-up without saved cursor; selfFloor fallback, delivering in-lookback allowed bots`,
-            );
-          }
+          const seedOnly = !this.opts.state.has(id) && (this.forceSeed || !this.backfill);
           const selected = selectAutofetchMessages({
             messages,
             selfUserId: userId,
             lastProcessedId: last,
-            useSelfFloor,
-            allowedBotIds: this.allowedBotIds,
+            seedOnly,
             now: this.now(),
             lookbackMs: this.opts.lookbackMs,
           });
+          if (seedOnly && selected.nextCursor && !this.seededLogged.has(id)) {
+            this.seededLogged.add(id);
+            this.log(
+              `[bridge] autofetch channel=${id} seeded cursor=${selected.nextCursor} (no backfill; delivering nothing)`,
+            );
+          }
+          if (!seedOnly && !last && messages.length > 0) {
+            this.log(
+              `[bridge] autofetch channel=${id} backfill delivering in-lookback messages`,
+            );
+          }
+          if (selected.gap && last && !this.gapLogged.has(`${id}:${last}`)) {
+            this.gapLogged.add(`${id}:${last}`);
+            this.error(
+              `[bridge] autofetch channel=${id} gap exceeds ${AUTOFETCH_BATCH_LIMIT} messages since cursor ${last}; messages between the cursor and the fetched page were not seen`,
+            );
+          }
           parts.push(`${id}:newest=${selected.newestId ?? "none"},last=${last ?? "none"}`);
           for (const message of selected.deliver) {
             fresh += 1;
@@ -411,6 +508,8 @@ export class AutofetchLoop<TChannel, TPayload> {
               this.error(`[bridge] autofetch deliver error ${message.id} ${errorText(err)}`);
             }
           }
+          // At-most-once: persist at hand-off. handleMessage is not awaited, so a
+          // crash during agent generation will not fetch this message again.
           if (selected.nextCursor) {
             if (!this.opts.state.set(id, selected.nextCursor)) {
               errors += 1;
@@ -430,13 +529,24 @@ export class AutofetchLoop<TChannel, TPayload> {
       } else {
         const elapsed = this.now() - this.runningSince;
         this.running = false;
-        this.lastTickDoneAt = this.now();
+        this.inFlight = false;
         this.watchdogResets = 0;
         const detail = parts.length > 0 ? ` ${parts.join(" ")}` : "";
-        this.log(
-          `[bridge] heartbeat tick=${n} ok ${elapsed}ms new=${fresh} errors=${errors}${detail}`,
-        );
+        this.logHeartbeat(n, errors, fresh, elapsed, detail);
       }
+    }
+  }
+
+  private logHeartbeat(tickNo: number, errors: number, fresh: number, elapsed: number, detail: string): void {
+    const status = errors > 0 ? "error" : "ok";
+    const signature = `${status}|${fresh}|${detail}`;
+    const changed = signature !== this.lastHeartbeatSignature;
+    this.lastHeartbeatSignature = signature;
+    const every = this.heartbeatEvery;
+    if (status === "error" || changed || tickNo === 1 || tickNo % every === 0) {
+      this.log(
+        `[bridge] heartbeat tick=${tickNo} ${status} ${elapsed}ms new=${fresh} errors=${errors}${detail}`,
+      );
     }
   }
 
@@ -445,8 +555,9 @@ export class AutofetchLoop<TChannel, TPayload> {
     this.prepared = true;
     const loaded = this.opts.state.load();
     if (!loaded.ok) {
+      this.forceSeed = true;
       this.error(
-        `[bridge] autofetch state ignored (${loaded.reason}); selfFloor fallback until a cursor is saved`,
+        `[bridge] autofetch state ignored (${loaded.reason}); seeding cursors and not replaying`,
       );
     }
   }
@@ -459,6 +570,12 @@ export class AutofetchLoop<TChannel, TPayload> {
       run,
       sleep: this.sleep,
       shouldAbort: () => this.generation !== myGen,
+      onWait: (kind, waitMs) => {
+        this.inFlight = true;
+        this.lastProgressAt = this.now();
+        this.graceMs = waitMs + WATCHDOG_SLACK_MS;
+        void kind;
+      },
       onRetry: (info) => {
         this.error(
           `[bridge] autofetch retry ${label} attempt=${info.attempt} in ${info.delayMs}ms: ${info.message}`,

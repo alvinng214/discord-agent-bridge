@@ -173,7 +173,8 @@ export function startAutofetch(
     lookbackMs: config.autofetchLookbackMs,
     fetchTimeoutMs: config.autofetchFetchTimeoutMs,
     fetchAttempts: config.autofetchFetchAttempts,
-    allowedBotIds: config.allowedBotUsers,
+    backfill: config.autofetchBackfill,
+    heartbeatEvery: config.heartbeatEvery,
     state: new AutofetchStateStore(statePath),
     statePath,
     userId: () => client.user?.id ?? null,
@@ -201,6 +202,10 @@ interface PollableChannel {
     fetch(query: { limit: number; cache?: boolean }): Promise<ReadonlyMap<string, Message>>;
   };
 }
+
+// discord.js 14.16 ChannelManager.fetch / MessageManager.fetch do not accept an
+// AbortSignal (they call rest.get without one). withTimeout cannot cancel these
+// sockets; it only stops the poll from waiting. See withTimeout in autofetch.ts.
 
 async function fetchPollableChannel(client: Client, id: string): Promise<PollableChannel | null> {
   const channel = await client.channels.fetch(id);
