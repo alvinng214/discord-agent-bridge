@@ -86,7 +86,7 @@ docker compose up --build
 | `DISCORD_ALLOWED_CHANNELS` | no | If set, guild messages are allowed only in these channels or their threads |
 | `DISCORD_REQUIRE_MENTION` | no | Default `true` outside free-response channels (DMs never require mention) |
 | `DISCORD_ALLOWED_BOTS` | no | Bot user IDs that may message this bot. Every other bot is ignored |
-| `DISCORD_MAX_BOT_TURNS` | no | Default `2`. Cap on unaddressed bot-to-bot replies. An @mention bypasses the cap |
+| `DISCORD_MAX_BOT_TURNS` | no | Still parsed (default `2`) but not applied. Allowed bots that pass access control are always delivered |
 | `DISCORD_INCLUDE_REPLY_CONTEXT` | no | Default `false`. Include the message being replied to in the agent prompt |
 | `DISCORD_AUTOFETCH` | no | Default `false`. Poll free-response channels for messages the gateway missed |
 | `DISCORD_AUTOFETCH_INTERVAL_MS` | no | Default `15000`, minimum `5000` |

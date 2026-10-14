@@ -16,7 +16,6 @@ import {
   type PolledMessage,
 } from "./autofetch.js";
 import { autofetchStatePath, AutofetchStateStore } from "./autofetchState.js";
-import { isConfirmationPing } from "./confirmationPing.js";
 import { RateLimiter } from "./rateLimit.js";
 import { sendSplitReply, withTyping } from "./reply.js";
 
@@ -90,9 +89,6 @@ export function channelContext(message: Message): {
 /** Shared by the gateway handler and autofetch so a message is handled once. */
 class TurnTracker {
   private readonly seen = new Set<string>();
-  private consecutiveBotTurns = 0;
-
-  constructor(private readonly maxBotTurns: number) {}
 
   /** Returns false if this Discord message was already handled. */
   remember(id: string): boolean {
@@ -107,28 +103,13 @@ class TurnTracker {
     }
     return true;
   }
-
-  noteSelf(): void {
-    this.consecutiveBotTurns = 0;
-  }
-
-  noteHuman(): void {
-    this.consecutiveBotTurns = 0;
-  }
-
-  /** False when an unaddressed bot message exceeds DISCORD_MAX_BOT_TURNS. */
-  consumeBotTurn(): boolean {
-    if (this.consecutiveBotTurns >= this.maxBotTurns) return false;
-    this.consecutiveBotTurns += 1;
-    return true;
-  }
 }
 
 export function attachMessageHandler(
   client: Client,
   config: Config,
   backend: AgentBackend,
-  tracker: TurnTracker = new TurnTracker(config.maxBotTurns),
+  tracker: TurnTracker = new TurnTracker(),
 ): void {
   const limiter = new RateLimiter(config.rateLimitPerUser, config.rateLimitWindowMs);
 
@@ -151,7 +132,7 @@ export function startAutofetch(
   client: Client,
   config: Config,
   backend: AgentBackend,
-  tracker: TurnTracker = new TurnTracker(config.maxBotTurns),
+  tracker: TurnTracker = new TurnTracker(),
 ): () => void {
   if (!config.autofetch) return () => undefined;
   const channels = config.freeResponseChannels.filter((id) => !config.blockedChannels.includes(id));
@@ -320,11 +301,6 @@ async function handleMessage(
     },
   );
 
-  // Our own posts mean we answered: reset the bot-to-bot turn budget.
-  if (message.author.id === client.user.id) {
-    tracker.noteSelf();
-  }
-
   if (!access.allowed) {
     if (message.author.id !== client.user.id) {
       console.log(`[bridge] access denied message=${message.id} reason=${access.reason}`);
@@ -341,19 +317,9 @@ async function handleMessage(
   }
 
   const content = stripBotMention(message.content, client.user.id);
-  if (message.author.bot && isConfirmationPing(content)) return;
-  if (message.author.bot) {
-    // An allowed bot that explicitly @-mentions us is always delivered;
-    // the turn cap only limits unaddressed bot chatter.
-    if (!botMentioned && !tracker.consumeBotTurn()) {
-      console.log(
-        `[bridge] bot-turn cap dropped message=${message.id} from=${message.author.username}`,
-      );
-      return;
-    }
-  } else {
-    tracker.noteHuman();
-  }
+  // Confirmation-word and MAX_BOT_TURNS drops were removed: they silently
+  // swallowed real allowed-bot messages, including GPT's Round 8 verdict
+  // that contained "Confirmed". Allowed bots that pass evaluateAccess are delivered.
   if (!content) {
     await message.reply({
       content: isDm
@@ -395,7 +361,7 @@ async function handleMessage(
 
 export async function startBot(config: Config, backend: AgentBackend): Promise<Client> {
   const client = createDiscordClient(config);
-  const tracker = new TurnTracker(config.maxBotTurns);
+  const tracker = new TurnTracker();
   attachMessageHandler(client, config, backend, tracker);
 
   client.once(Events.ClientReady, () => {
