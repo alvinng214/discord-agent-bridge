@@ -18,6 +18,15 @@ export interface AgentRequest {
    * can send the Discord message (split/~1900) before generate() resolves.
    */
   deliverReply?: (text: string) => Promise<void>;
+  /** The earlier Discord message this one replies to, when the user used Discord's reply. */
+  replyTo?: ReplyContext;
+}
+
+export interface ReplyContext {
+  authorDisplayName: string;
+  isBot: boolean;
+  createdAt: string;
+  content: string;
 }
 
 export interface AgentResponse {

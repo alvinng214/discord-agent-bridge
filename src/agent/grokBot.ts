@@ -70,6 +70,16 @@ export function buildGrokBotPrompt(
     "## Discord context",
     ...contextLines,
     "",
+    ...(request.replyTo
+      ? [
+          "## Replying to",
+          `author: ${request.replyTo.authorDisplayName}${request.replyTo.isBot ? " (bot)" : ""}`,
+          `sentAt: ${request.replyTo.createdAt}`,
+          "content:",
+          request.replyTo.content || "(no text)",
+          "",
+        ]
+      : []),
     "## Message",
     request.content,
   ].join("\n");

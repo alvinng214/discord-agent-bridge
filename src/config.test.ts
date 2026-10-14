@@ -35,6 +35,17 @@ describe("loadConfig", () => {
     expect(cfg.allowedUsers).toEqual(["111", "222"]);
     expect(cfg.allowedRoles).toEqual(["r1"]);
     expect(cfg.freeResponseChannels).toEqual(["c1", "c2"]);
+    expect(cfg.blockedChannels).toEqual([]);
+    expect(cfg.allowedChannels).toEqual([]);
+    expect(cfg.allowedBotUsers).toEqual([]);
+    expect(cfg.autofetch).toBe(false);
+    expect(cfg.autofetchIntervalMs).toBe(15_000);
+    expect(cfg.autofetchLookbackMs).toBe(2 * 60 * 60 * 1000);
+    expect(cfg.autofetchFetchTimeoutMs).toBe(10_000);
+    expect(cfg.autofetchFetchAttempts).toBe(3);
+    expect(cfg.maxBotTurns).toBe(2);
+    expect(cfg.includeReplyContext).toBe(false);
+    expect(cfg.autofetchStateDir).toMatch(/\/run$/);
     expect(cfg.requireMention).toBe(true);
     expect(cfg.allowAllUsers).toBe(false);
     expect(cfg.systemPrompt).toContain("You are a test soul.");
@@ -167,5 +178,39 @@ describe("loadConfig", () => {
     expect(cfg.allowedGuilds).toEqual(["g1", "g2"]);
     expect(cfg.allowDms).toBe(true);
     expect(cfg.dmOnly).toBe(true);
+  });
+
+  it("parses autofetch knobs and floors the poll interval at 5s", () => {
+    const soul = writeSoul();
+    const cfg = loadConfig(
+      grokBotEnv(soul, {
+        DISCORD_AUTOFETCH: "true",
+        DISCORD_AUTOFETCH_INTERVAL_MS: "1000",
+        DISCORD_AUTOFETCH_LOOKBACK_MS: "60000",
+        DISCORD_AUTOFETCH_STATE_DIR: "/tmp/bridge-state",
+        DISCORD_AUTOFETCH_FETCH_TIMEOUT_MS: "8000",
+        DISCORD_AUTOFETCH_FETCH_ATTEMPTS: "2",
+        DISCORD_ALLOWED_BOTS: "bot1, bot2",
+        DISCORD_BLOCKED_CHANNELS: "blocked",
+        DISCORD_MAX_BOT_TURNS: "4",
+        DISCORD_INCLUDE_REPLY_CONTEXT: "true",
+      }),
+    );
+    expect(cfg.autofetch).toBe(true);
+    expect(cfg.autofetchIntervalMs).toBe(5_000);
+    expect(cfg.autofetchLookbackMs).toBe(60_000);
+    expect(cfg.autofetchStateDir).toBe("/tmp/bridge-state");
+    expect(cfg.autofetchFetchTimeoutMs).toBe(8_000);
+    expect(cfg.autofetchFetchAttempts).toBe(2);
+    expect(cfg.allowedBotUsers).toEqual(["bot1", "bot2"]);
+    expect(cfg.blockedChannels).toEqual(["blocked"]);
+    expect(cfg.maxBotTurns).toBe(4);
+    expect(cfg.includeReplyContext).toBe(true);
+  });
+
+  it("falls back to two bot turns when DISCORD_MAX_BOT_TURNS is invalid", () => {
+    const soul = writeSoul();
+    const cfg = loadConfig(grokBotEnv(soul, { DISCORD_MAX_BOT_TURNS: "0" }));
+    expect(cfg.maxBotTurns).toBe(2);
   });
 });

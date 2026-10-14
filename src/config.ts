@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { effectiveAutofetchIntervalMs } from "./discord/autofetch.js";
 
 export type AgentBackendKind = "openai" | "grok-bot";
 
@@ -12,7 +13,25 @@ export interface Config {
   allowDms: boolean;
   dmOnly: boolean;
   freeResponseChannels: string[];
+  blockedChannels: string[];
+  /** If non-empty, guild messages are allowed only in these channels or their threads. */
+  allowedChannels: string[];
+  /** Poll free-response channels for messages the gateway missed. Off unless DISCORD_AUTOFETCH=true. */
+  autofetch: boolean;
+  autofetchIntervalMs: number;
+  autofetchLookbackMs: number;
+  /** Absolute directory for per-bot autofetch cursor files. */
+  autofetchStateDir: string;
+  /** Per Discord REST call in the autofetch path. */
+  autofetchFetchTimeoutMs: number;
+  /** Total attempts per autofetch REST call, including the first try. */
+  autofetchFetchAttempts: number;
   requireMention: boolean;
+  /** Include the message being replied to in the agent prompt. Off unless DISCORD_INCLUDE_REPLY_CONTEXT=true. */
+  includeReplyContext: boolean;
+  allowedBotUsers: string[];
+  /** Unaddressed bot-to-bot replies allowed before the bridge stops responding. */
+  maxBotTurns: number;
   homeChannel: string | null;
   agentBackend: AgentBackendKind;
   apiBaseUrl: string | null;
@@ -57,6 +76,34 @@ function parseNumber(value: string | undefined, defaultValue: number): number {
   if (value === undefined || value.trim() === "") return defaultValue;
   const n = Number(value);
   if (!Number.isFinite(n)) throw new Error(`Invalid number env value: ${value}`);
+  return n;
+}
+
+function parsePositive(value: string | undefined, defaultValue: number, name: string): number {
+  const n = parseNumber(value, defaultValue);
+  if (n <= 0) throw new Error(`${name} must be a positive number`);
+  return n;
+}
+
+function parseBoundedInt(
+  value: string | undefined,
+  defaultValue: number,
+  min: number,
+  max: number,
+  name: string,
+): number {
+  const n = parseNumber(value, defaultValue);
+  if (!Number.isInteger(n) || n < min || n > max) {
+    throw new Error(`${name} must be an integer between ${min} and ${max}`);
+  }
+  return n;
+}
+
+/** Invalid or empty values fall back to 2 so a bad env does not take the bridge down. */
+function parseMaxBotTurns(value: string | undefined): number {
+  if (value === undefined || value.trim() === "") return 2;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1) return 2;
   return n;
 }
 
@@ -153,7 +200,36 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     allowDms,
     dmOnly,
     freeResponseChannels: parseCsvIds(env.DISCORD_FREE_RESPONSE_CHANNELS),
+    blockedChannels: parseCsvIds(env.DISCORD_BLOCKED_CHANNELS),
+    allowedChannels: parseCsvIds(env.DISCORD_ALLOWED_CHANNELS),
+    autofetch: parseBool(env.DISCORD_AUTOFETCH, false),
+    autofetchIntervalMs: effectiveAutofetchIntervalMs(
+      parsePositive(env.DISCORD_AUTOFETCH_INTERVAL_MS, 15_000, "DISCORD_AUTOFETCH_INTERVAL_MS"),
+    ),
+    autofetchLookbackMs: parsePositive(
+      env.DISCORD_AUTOFETCH_LOOKBACK_MS,
+      2 * 60 * 60 * 1000,
+      "DISCORD_AUTOFETCH_LOOKBACK_MS",
+    ),
+    autofetchStateDir: resolve(process.cwd(), env.DISCORD_AUTOFETCH_STATE_DIR?.trim() || "run"),
+    autofetchFetchTimeoutMs: parseBoundedInt(
+      env.DISCORD_AUTOFETCH_FETCH_TIMEOUT_MS,
+      10_000,
+      1_000,
+      60_000,
+      "DISCORD_AUTOFETCH_FETCH_TIMEOUT_MS",
+    ),
+    autofetchFetchAttempts: parseBoundedInt(
+      env.DISCORD_AUTOFETCH_FETCH_ATTEMPTS,
+      3,
+      1,
+      5,
+      "DISCORD_AUTOFETCH_FETCH_ATTEMPTS",
+    ),
     requireMention: parseBool(env.DISCORD_REQUIRE_MENTION, true),
+    includeReplyContext: parseBool(env.DISCORD_INCLUDE_REPLY_CONTEXT, false),
+    allowedBotUsers: parseCsvIds(env.DISCORD_ALLOWED_BOTS),
+    maxBotTurns: parseMaxBotTurns(env.DISCORD_MAX_BOT_TURNS),
     homeChannel: env.DISCORD_HOME_CHANNEL?.trim() || null,
     agentBackend,
     apiBaseUrl,
