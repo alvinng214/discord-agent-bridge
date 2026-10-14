@@ -33,8 +33,9 @@ export type AccessDecision =
   | { allowed: false; reason: string };
 
 /**
- * Team/personal gate: self and non-allowed bots ignored; user/role allowlists fail closed;
- * optional guild, channel, and DM / DM-only modes;
+ * Team/personal gate: self and non-allowed bots ignored; user/role allowlists fail closed
+ * for humans. A bot listed in DISCORD_ALLOWED_BOTS is authorized by that list alone.
+ * Optional guild, channel, and DM / DM-only modes still apply to everyone;
  * mention required in guilds unless free-response channel or REQUIRE_MENTION=false.
  * DMs never require an @mention.
  */
@@ -77,7 +78,9 @@ export function evaluateAccess(input: AccessInput, config: AccessConfig): Access
     }
   }
 
-  if (!config.allowAllUsers) {
+  // Listed bots are authorized by DISCORD_ALLOWED_BOTS; do not also require
+  // the human user/role allowlist (that produced reason=user_not_allowed).
+  if (!allowedBot && !config.allowAllUsers) {
     const userOk = config.allowedUsers.includes(input.authorId);
     const roleOk =
       !input.isDm &&

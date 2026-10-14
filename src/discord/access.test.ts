@@ -35,12 +35,17 @@ describe("evaluateAccess", () => {
     expect(evaluateAccess(guildInput({ isSelf: true }), baseConfig).allowed).toBe(false);
   });
 
-  it("allows a listed bot user", () => {
+  it("allows a listed bot that is not on the user allowlist", () => {
     expect(
-      evaluateAccess(guildInput({ isBot: true, authorId: "bot-ok" }), {
-        ...baseConfig,
-        allowedUsers: ["u1", "bot-ok"],
-      }),
+      evaluateAccess(
+        guildInput({
+          isBot: true,
+          authorId: "bot-ok",
+          channelId: "free",
+          botMentioned: false,
+        }),
+        baseConfig,
+      ),
     ).toEqual({ allowed: true });
   });
 
