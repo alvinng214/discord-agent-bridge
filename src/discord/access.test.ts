@@ -49,6 +49,41 @@ describe("evaluateAccess", () => {
     ).toEqual({ allowed: true });
   });
 
+  it("denies an allowed bot DM that is not on the user allowlist", () => {
+    expect(
+      evaluateAccess(
+        guildInput({
+          isBot: true,
+          authorId: "bot-ok",
+          isDm: true,
+          guildId: null,
+          botMentioned: false,
+        }),
+        { ...baseConfig, allowDms: true },
+      ),
+    ).toEqual({ allowed: false, reason: "user_not_allowed" });
+  });
+
+  it("requires a mention from an allowed bot outside free-response channels", () => {
+    expect(
+      evaluateAccess(
+        guildInput({
+          isBot: true,
+          authorId: "bot-ok",
+          channelId: "c",
+          botMentioned: false,
+        }),
+        baseConfig,
+      ),
+    ).toEqual({ allowed: false, reason: "mention_required" });
+  });
+
+  it("still applies the user allowlist to a human whose id is listed as a bot", () => {
+    expect(
+      evaluateAccess(guildInput({ isBot: false, authorId: "bot-ok" }), baseConfig),
+    ).toEqual({ allowed: false, reason: "user_not_allowed" });
+  });
+
   it("allows listed users when mentioned", () => {
     expect(evaluateAccess(guildInput(), baseConfig)).toEqual({ allowed: true });
   });
