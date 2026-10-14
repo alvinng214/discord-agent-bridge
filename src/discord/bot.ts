@@ -19,7 +19,7 @@ import { autofetchStatePath, AutofetchStateStore } from "./autofetchState.js";
 import { RateLimiter } from "./rateLimit.js";
 import { sendSplitReply, withTyping } from "./reply.js";
 
-export { isConfirmationPing, isSection9AnalystPage } from "./confirmationPing.js";
+export { isSection9AnalystPage } from "./confirmationPing.js";
 
 export function createDiscordClient(config: Config): Client {
   const intents: GatewayIntentBits[] = [
@@ -146,6 +146,9 @@ export function startAutofetch(
     return () => undefined;
   }
 
+  // Separate from the gateway limiter in attachMessageHandler, so one author can
+  // get up to 2x rateLimitPerUser per window across both paths (dedupe still
+  // prevents the same message being handled twice).
   const limiter = new RateLimiter(config.rateLimitPerUser, config.rateLimitWindowMs);
   const statePath = autofetchStatePath(config.autofetchStateDir, userId);
   const loop = new AutofetchLoop<PollableChannel, Message>({
@@ -172,7 +175,6 @@ export function startAutofetch(
         },
       );
     },
-    bannerSuffix: `maxBotTurns=${config.maxBotTurns}`,
   });
   loop.start();
   return () => loop.stop();
@@ -309,6 +311,12 @@ async function handleMessage(
   }
 
   if (!limiter.tryConsume(message.author.id)) {
+    console.log(
+      `[bridge] rate limited message=${message.id} author=${message.author.id} bot=${message.author.bot}`,
+    );
+    // Never send the canned reply to a bot: two rate-limited bridges would
+    // trade canned replies with no cap.
+    if (message.author.bot) return;
     await message.reply({
       content: "You're sending messages too quickly — try again in a minute.",
       allowedMentions: { repliedUser: false },
@@ -321,6 +329,10 @@ async function handleMessage(
   // swallowed real allowed-bot messages, including GPT's Round 8 verdict
   // that contained "Confirmed". Allowed bots that pass evaluateAccess are delivered.
   if (!content) {
+    if (message.author.bot) {
+      console.log(`[bridge] empty content from bot message=${message.id} author=${message.author.id}; no reply sent`);
+      return;
+    }
     await message.reply({
       content: isDm
         ? "Send me a message with what you need help with."

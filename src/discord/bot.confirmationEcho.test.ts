@@ -67,6 +67,7 @@ function botMessage(partial: {
   content: string;
   username: string;
   mentioned: boolean;
+  reply?: (...args: unknown[]) => Promise<unknown>;
 }): Message {
   return {
     id: partial.id,
@@ -90,7 +91,7 @@ function botMessage(partial: {
         has: (id: string) => partial.mentioned && id === SELF_ID,
       },
     },
-    reply: () => Promise.resolve(),
+    reply: partial.reply ?? (() => Promise.resolve()),
   } as unknown as Message;
 }
 
@@ -155,5 +156,41 @@ describe("allowed bot delivery", () => {
     expect(generate).toHaveBeenLastCalledWith(
       expect.objectContaining({ content: `bot turn ${turns}` }),
     );
+  });
+
+  it("logs instead of replying when an allowed bot is rate limited", async () => {
+    const generate = vi.fn(async () => ({ text: "ack", delivered: true }));
+    const backend: AgentBackend = { name: "test", generate };
+    const client = fakeClient();
+    const config = { ...bridgeConfig(), rateLimitPerUser: 1 };
+    attachMessageHandler(client, config, backend);
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const reply = vi.fn(async () => undefined);
+
+    for (const id of ["rl-1", "rl-2"]) {
+      await dispatch(client, botMessage({ id, username: "GPT", mentioned: false, content: `msg ${id}`, reply }));
+    }
+
+    expect(generate).toHaveBeenCalledOnce();
+    expect(reply).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("rate limited message=rl-2"));
+  });
+
+  it("logs instead of replying when an allowed bot sends empty content", async () => {
+    const generate = vi.fn(async () => ({ text: "ack", delivered: true }));
+    const backend: AgentBackend = { name: "test", generate };
+    const client = fakeClient();
+    attachMessageHandler(client, bridgeConfig(), backend);
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const reply = vi.fn(async () => undefined);
+
+    await dispatch(
+      client,
+      botMessage({ id: "empty-1", username: "GPT", mentioned: true, content: `<@${SELF_ID}>`, reply }),
+    );
+
+    expect(generate).not.toHaveBeenCalled();
+    expect(reply).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("empty content from bot message=empty-1"));
   });
 });
