@@ -341,7 +341,14 @@ async function handleMessage(
   }
 
   const content = stripBotMention(message.content, client.user.id);
-  if (message.author.bot && isConfirmationPing(content)) return;
+  // Other bots' confirm/probe echoes are dropped only when they did not @-mention us.
+  // An explicit mention is a real turn (an audit verdict may say "Confirmed").
+  if (message.author.bot && !botMentioned && isConfirmationPing(content)) {
+    console.log(
+      `[bridge] confirmation-echo filter dropped message=${message.id} from=${message.author.username}`,
+    );
+    return;
+  }
   if (message.author.bot) {
     // An allowed bot that explicitly @-mentions us is always delivered;
     // the turn cap only limits unaddressed bot chatter.
