@@ -19,7 +19,13 @@ export interface AccessConfig {
   allowDms: boolean;
   dmOnly: boolean;
   freeResponseChannels: string[];
+  /** Channel ids this agent must never read, including threads under them. */
+  blockedChannels: string[];
+  /** If non-empty, guild messages are allowed only in these channels or their threads. DMs are unaffected. */
+  allowedChannels: string[];
   requireMention: boolean;
+  /** Bot user ids that may message us. Every other bot is still ignored. */
+  allowedBotUsers: string[];
 }
 
 export type AccessDecision =
@@ -27,13 +33,31 @@ export type AccessDecision =
   | { allowed: false; reason: string };
 
 /**
- * Team/personal gate: bots/self ignored; user/role allowlists fail closed;
- * optional guild allowlist and DM / DM-only modes;
+ * Team/personal gate: self and non-allowed bots ignored; user/role allowlists fail closed;
+ * optional guild, channel, and DM / DM-only modes;
  * mention required in guilds unless free-response channel or REQUIRE_MENTION=false.
  * DMs never require an @mention.
  */
 export function evaluateAccess(input: AccessInput, config: AccessConfig): AccessDecision {
-  if (input.isBot || input.isSelf) {
+  const blocked =
+    config.blockedChannels.includes(input.channelId) ||
+    (!!input.parentChannelId && config.blockedChannels.includes(input.parentChannelId));
+  if (blocked) {
+    return { allowed: false, reason: "channel_blocked" };
+  }
+
+  if (!input.isDm && config.allowedChannels.length > 0) {
+    const channelOk =
+      config.allowedChannels.includes(input.channelId) ||
+      (!!input.parentChannelId && config.allowedChannels.includes(input.parentChannelId));
+    if (!channelOk) {
+      return { allowed: false, reason: "channel_not_allowed" };
+    }
+  }
+
+  const allowedBot =
+    input.isBot && !input.isSelf && config.allowedBotUsers.includes(input.authorId);
+  if (input.isSelf || (input.isBot && !allowedBot)) {
     return { allowed: false, reason: "ignore_bot_or_self" };
   }
 

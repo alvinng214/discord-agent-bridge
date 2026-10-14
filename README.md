@@ -81,8 +81,21 @@ docker compose up --build
 | `DISCORD_ALLOWED_GUILDS` | no | Comma-separated guild IDs; empty = any guild |
 | `DISCORD_ALLOW_DMS` | no | Default `false`. Allow DM conversations with the bot |
 | `DISCORD_DM_ONLY` | no | Default `false`. Ignore all guild messages |
-| `DISCORD_FREE_RESPONSE_CHANNELS` | no | Channel IDs where @mention is not required |
+| `DISCORD_FREE_RESPONSE_CHANNELS` | no | Channel IDs where @mention is not required. Also the channels autofetch polls |
+| `DISCORD_BLOCKED_CHANNELS` | no | Channel IDs the bot never reads, including threads under them |
+| `DISCORD_ALLOWED_CHANNELS` | no | If set, guild messages are allowed only in these channels or their threads |
 | `DISCORD_REQUIRE_MENTION` | no | Default `true` outside free-response channels (DMs never require mention) |
+| `DISCORD_ALLOWED_BOTS` | no | Bot user IDs that may message this bot. Every other bot is ignored |
+| `DISCORD_MAX_BOT_TURNS` | no | Default `2`. Cap on unaddressed bot-to-bot replies. An @mention bypasses the cap |
+| `DISCORD_INCLUDE_REPLY_CONTEXT` | no | Default `false`. Include the message being replied to in the agent prompt |
+| `DISCORD_AUTOFETCH` | no | Default `false`. Poll free-response channels for messages the gateway missed |
+| `DISCORD_AUTOFETCH_INTERVAL_MS` | no | Default `15000`, minimum `5000` |
+| `DISCORD_AUTOFETCH_LOOKBACK_MS` | no | Default `7200000` (2 hours). Older messages are not delivered |
+| `DISCORD_AUTOFETCH_STATE_DIR` | no | Default `run`. Directory for `autofetch-state.<botUserId>.json` |
+| `DISCORD_AUTOFETCH_FETCH_TIMEOUT_MS` | no | Default `10000` (min `1000`, max `60000`) per Discord REST call |
+| `DISCORD_AUTOFETCH_FETCH_ATTEMPTS` | no | Default `3` (min `1`, max `5`) attempts for transient DNS/connect errors. A 429 waits for `retry_after` (capped at 60s) |
+| `DISCORD_AUTOFETCH_BACKFILL` | no | Default `false`. With no saved cursor, seed to the newest message and deliver nothing. `true` replays the lookback once. A corrupt state file always seeds and does not replay |
+| `DISCORD_HEARTBEAT_EVERY` | no | Default `20`. Log clean autofetch heartbeats every N ticks, and always when the outcome changes. Skipped and error ticks always log |
 | `DISCORD_HOME_CHANNEL` | no | Optional home channel (logged at startup) |
 | `AGENT_BACKEND` | no | `openai` (default) or `grok-bot` |
 | `API_BASE_URL` | if openai | e.g. `https://api.x.ai/v1` or `https://api.openai.com/v1` |
@@ -106,6 +119,10 @@ docker compose up --build
 | `TAVILY_API_KEY` | no | Enables Tavily web search tool |
 
 Access control fails closed: if `DISCORD_ALLOW_ALL_USERS` is false and both user/role allowlists are empty, nobody is served.
+
+When `DISCORD_AUTOFETCH=true`, the bridge polls free-response channels and stores the last handed-off message id per channel under `DISCORD_AUTOFETCH_STATE_DIR` (one file per bot user id). Delivery is at-most-once: the cursor advances when the message is handed to the handler, before the agent reply finishes. The first poll with no cursor seeds that cursor to the newest id and delivers nothing unless `DISCORD_AUTOFETCH_BACKFILL=true`. A corrupt state file always seeds and does not replay, even when backfill is on. A full page of 25 messages that still starts after the cursor logs a gap warning; those in-between messages were not fetched.
+
+Clean ticks log `[bridge] heartbeat tick=N ok ...` on the first tick, every `DISCORD_HEARTBEAT_EVERY` ticks, and whenever the outcome changes. `[bridge] heartbeat tick=N skipped: ...` and `heartbeat tick=N error ...` always log. Transient DNS/connect/429 errors stay in-process. The process exits `75` only when an in-flight fetch or retry sleep makes no progress past its own timeout; a slow outage does not. discord.js 14 channel and message fetch methods do not accept an AbortSignal, so a timed-out poll stops waiting but cannot cancel the underlying REST socket.
 
 `AGENT_BACKEND=grok-bot` also fails closed if any of `GROK_BOT_GATEWAY_URL`, `GROK_BOT_TOKEN`, `GROK_BOT_AGENT_ID`, `BRIDGE_PUBLIC_URL`, or `BRIDGE_REPLY_TOKEN` is missing.
 

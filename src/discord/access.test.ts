@@ -9,7 +9,10 @@ const baseConfig: AccessConfig = {
   allowDms: false,
   dmOnly: false,
   freeResponseChannels: ["free"],
+  blockedChannels: [],
+  allowedChannels: [],
   requireMention: true,
+  allowedBotUsers: ["bot-ok"],
 };
 
 function guildInput(overrides: Partial<AccessInput> = {}): AccessInput {
@@ -29,6 +32,16 @@ function guildInput(overrides: Partial<AccessInput> = {}): AccessInput {
 describe("evaluateAccess", () => {
   it("ignores bots and self", () => {
     expect(evaluateAccess(guildInput({ isBot: true }), baseConfig).allowed).toBe(false);
+    expect(evaluateAccess(guildInput({ isSelf: true }), baseConfig).allowed).toBe(false);
+  });
+
+  it("allows a listed bot user", () => {
+    expect(
+      evaluateAccess(guildInput({ isBot: true, authorId: "bot-ok" }), {
+        ...baseConfig,
+        allowedUsers: ["u1", "bot-ok"],
+      }),
+    ).toEqual({ allowed: true });
   });
 
   it("allows listed users when mentioned", () => {
@@ -146,4 +159,36 @@ describe("evaluateAccess", () => {
     ).toEqual({ allowed: true });
   });
 
+  it("blocks a channel and threads under it even when mentioned", () => {
+    const cfg = { ...baseConfig, blockedChannels: ["g1", "g2"] };
+    expect(evaluateAccess(guildInput({ channelId: "g1" }), cfg)).toEqual({
+      allowed: false,
+      reason: "channel_blocked",
+    });
+    expect(evaluateAccess(guildInput({ channelId: "thread", parentChannelId: "g2" }), cfg)).toEqual({
+      allowed: false,
+      reason: "channel_blocked",
+    });
+    expect(evaluateAccess(guildInput({ channelId: "g3" }), cfg).allowed).toBe(true);
+  });
+
+  it("allows only listed guild channels when allowedChannels is set", () => {
+    const cfg = { ...baseConfig, allowedChannels: ["only"], requireMention: false };
+    expect(evaluateAccess(guildInput({ channelId: "only", botMentioned: false }), cfg)).toEqual({
+      allowed: true,
+    });
+    const denied = evaluateAccess(guildInput({ channelId: "other", botMentioned: true }), cfg);
+    expect(denied.allowed).toBe(false);
+    if (!denied.allowed) expect(denied.reason).toBe("channel_not_allowed");
+  });
+
+  it("does not apply allowedChannels to DMs", () => {
+    const cfg = { ...baseConfig, allowedChannels: ["only"], allowDms: true };
+    expect(
+      evaluateAccess(
+        guildInput({ isDm: true, channelId: "dm", guildId: null, botMentioned: false }),
+        cfg,
+      ),
+    ).toEqual({ allowed: true });
+  });
 });

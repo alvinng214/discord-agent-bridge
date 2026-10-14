@@ -57,6 +57,28 @@ describe("buildGrokBotPrompt", () => {
     expect(prompt).toContain("authorDisplayName: Nate");
     expect(prompt).toContain("where are cooking pots?");
     expect(prompt).toContain("---BEGIN DISCORD_BRIDGE_REPLY---");
+    expect(prompt).not.toContain("## Replying to");
+  });
+
+  it("includes the Discord reply target when replyTo is set", () => {
+    const prompt = buildGrokBotPrompt(
+      {
+        ...request,
+        replyTo: {
+          authorDisplayName: "GPT",
+          isBot: true,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          content: "earlier note",
+        },
+      },
+      "corr-abc",
+      "http://bridge.example:8788/internal/reply",
+      "reply-token",
+    );
+    expect(prompt).toContain("## Replying to");
+    expect(prompt).toContain("author: GPT (bot)");
+    expect(prompt).toContain("sentAt: 2026-01-01T00:00:00.000Z");
+    expect(prompt).toContain("earlier note");
   });
 });
 
